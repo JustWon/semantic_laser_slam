@@ -14,6 +14,10 @@
 #include "laser_slam_ros/GetLaserTrackSrv.h"
 #include "laser_slam_ros/common.hpp"
 
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+
 namespace laser_slam_ros {
 
 class LaserSlamWorker {
@@ -28,6 +32,11 @@ class LaserSlamWorker {
 
   /// \brief Register the local scans to the sliding window estimator.
   void scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in);
+  void scanCallback_without_IMU(const sensor_msgs::PointCloud2& cloud_msg_in);
+  void scanCallback_double_lidars(const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2);
+
+  void mergeLidarPointCloud_SR (const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
+  void mergeLidarPointCloud_KAIST(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
 
   /// \brief Publish the robot trajectory (as path) in ROS.
   void publishTrajectory(const laser_slam::Trajectory& trajectory,
@@ -116,6 +125,14 @@ class LaserSlamWorker {
   // Subscribers.
   ros::Subscriber scan_sub_;
 
+  // for double lidars
+  typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::PointCloud2> MySyncPolicy;
+  typedef message_filters::Synchronizer<MySyncPolicy> Sync;
+  boost::shared_ptr<Sync> sync;
+
+  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub1;
+  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub2;
+
   // Publishers.
   ros::Publisher trajectory_pub_;
   ros::Publisher local_map_pub_;
@@ -163,6 +180,8 @@ class LaserSlamWorker {
   static constexpr double kTimeout_s = 0.2;
   static constexpr unsigned int kScanSubscriberMessageQueueSize = 1u;
   static constexpr unsigned int kPublisherQueueSize = 50u;
+
+  sensor_msgs::PointCloud2 merged_cloud_msg_in;
 }; // LaserSlamWorker
 
 } // namespace laser_slam_ros

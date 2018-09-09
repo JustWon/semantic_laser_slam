@@ -32,6 +32,9 @@ struct LaserSlamWorkerParams {
 
   bool use_odometry_information = true;
 
+  bool without_imu = false;
+  bool double_lidars = false;
+
 
   // Frames.
   std::string odom_frame;
@@ -40,6 +43,7 @@ struct LaserSlamWorkerParams {
 
   // Topics.
   std::string assembled_cloud_sub_topic;
+  std::string assembled_cloud_sub2_topic;
   std::string trajectory_pub_topic;
   std::string odometry_trajectory_pub_topic;
   std::string full_map_pub_topic;
@@ -82,12 +86,16 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
   nh.getParam(ns + "/map_publication_rate_hz", params.map_publication_rate_hz);
 
   nh.getParam(ns + "/assembled_cloud_sub_topic", params.assembled_cloud_sub_topic);
+  nh.getParam(ns + "/assembled_cloud_sub2_topic", params.assembled_cloud_sub2_topic);
   nh.getParam(ns + "/trajectory_pub_topic", params.trajectory_pub_topic);
   nh.getParam(ns + "/odometry_trajectory_pub_topic", params.odometry_trajectory_pub_topic);
   nh.getParam(ns + "/full_map_pub_topic", params.full_map_pub_topic);
   nh.getParam(ns + "/local_map_pub_topic", params.local_map_pub_topic);
   nh.getParam(ns + "/distant_map_pub_topic", params.distant_map_pub_topic);
   nh.getParam(ns + "/get_laser_track_srv_topic", params.get_laser_track_srv_topic);
+
+  nh.getParam(ns + "/without_imu", params.without_imu);
+  nh.getParam(ns + "/double_lidars", params.double_lidars);
 
   return params;
 }
