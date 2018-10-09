@@ -18,6 +18,8 @@
 #include <message_filters/time_synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 
+#include <laser_slam/LabeledPointCloud.h>
+
 namespace laser_slam_ros {
 
 class LaserSlamWorker {
@@ -32,10 +34,12 @@ class LaserSlamWorker {
 
   /// \brief Register the local scans to the sliding window estimator.
   void scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in);
+  void scanCallback_LabeledPointCloud(const laser_slam::LabeledPointCloud& labeled_cloud_msg_in);
   void scanCallback_without_IMU(const sensor_msgs::PointCloud2& cloud_msg_in);
+  void scanCallback_without_IMU_LabeledPointCloud(const laser_slam::LabeledPointCloud& labeled_cloud_msg_in);
   void scanCallback_double_lidars(const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2);
 
-  void mergeLidarPointCloud_SR (const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
+  void mergeLidarPointCloud_SR(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
   void mergeLidarPointCloud_KAIST(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
 
   /// \brief Publish the robot trajectory (as path) in ROS.

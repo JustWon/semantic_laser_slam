@@ -13,6 +13,8 @@ cs_add_library(${PROJECT_NAME}
 )
 
 find_package(Boost REQUIRED COMPONENTS system thread)
+find_package(catkin REQUIRED COMPONENTS sensor_msgs message_generation)
+
 
 catkin_add_gtest(${PROJECT_NAME}_tests 
   test/test_main.cpp
@@ -23,6 +25,16 @@ WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/test
 target_link_libraries(${PROJECT_NAME}_tests ${PROJECT_NAME})
 
 add_doxygen(REQUIRED)
+
+add_message_files(
+    FILES
+    LabeledPointCloud.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+  sensor_msgs
+)
 
 cs_install()
 cs_export()
