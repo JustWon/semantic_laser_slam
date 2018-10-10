@@ -149,6 +149,10 @@ class LaserSlamWorker {
   message_filters::Subscriber<sensor_msgs::Imu> *imu_sub;
   message_filters::Subscriber<sensor_msgs::NavSatFix> *gps_sub;
 
+  float er = 6378137.0f;  // earth radius (approx.) in meters
+  float scale = 0.0;
+  Eigen::Vector3f origin = Eigen::Vector3f(0,0,0);
+
   // Publishers.
   ros::Publisher trajectory_pub_;
   ros::Publisher local_map_pub_;

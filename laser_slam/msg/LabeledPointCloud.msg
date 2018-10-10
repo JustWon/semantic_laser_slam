@@ -1,7 +1,5 @@
-Header header
-
 # from IMU, for later use
-time time_stamp
+std_msgs/Header header
 
 # lidar point cloud
 sensor_msgs/PointCloud2 point_cloud
