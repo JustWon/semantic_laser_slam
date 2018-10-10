@@ -19,6 +19,7 @@
 #include <message_filters/sync_policies/approximate_time.h>
 
 #include <laser_slam/LabeledPointCloud.h>
+#include <sensor_msgs/NavSatFix.h>
 
 namespace laser_slam_ros {
 
@@ -34,7 +35,12 @@ class LaserSlamWorker {
 
   /// \brief Register the local scans to the sliding window estimator.
   void scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in);
-  void scanCallback_LabeledPointCloud(const laser_slam::LabeledPointCloud& labeled_cloud_msg_in);
+  void scanCallback_LabeledPointCloud(
+    const laser_slam::LabeledPointCloud::ConstPtr& labeled_cloud_msg_in, 
+    const sensor_msgs::Imu::ConstPtr& imu_msg_in,
+    const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in
+    );
+
   void scanCallback_without_IMU(const sensor_msgs::PointCloud2& cloud_msg_in);
   void scanCallback_without_IMU_LabeledPointCloud(const laser_slam::LabeledPointCloud& labeled_cloud_msg_in);
   void scanCallback_double_lidars(const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2);
@@ -130,12 +136,18 @@ class LaserSlamWorker {
   ros::Subscriber scan_sub_;
 
   // for double lidars
-  typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::PointCloud2> MySyncPolicy;
+  typedef message_filters::sync_policies::ApproximateTime
+      <laser_slam::LabeledPointCloud, sensor_msgs::Imu, sensor_msgs::NavSatFix> MySyncPolicy;
   typedef message_filters::Synchronizer<MySyncPolicy> Sync;
   boost::shared_ptr<Sync> sync;
 
-  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub1;
-  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub2;
+  // message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub1;
+  // message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub2;
+
+  // for the raw kitti format
+  message_filters::Subscriber<laser_slam::LabeledPointCloud> *labeled_points_sub;
+  message_filters::Subscriber<sensor_msgs::Imu> *imu_sub;
+  message_filters::Subscriber<sensor_msgs::NavSatFix> *gps_sub;
 
   // Publishers.
   ros::Publisher trajectory_pub_;
