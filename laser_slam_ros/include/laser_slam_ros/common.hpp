@@ -34,6 +34,7 @@ struct LaserSlamWorkerParams {
 
   bool without_imu = false;
   bool double_lidars = false;
+  bool argos_format = false;
 
 
   // Frames.
@@ -96,6 +97,7 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
 
   nh.getParam(ns + "/without_imu", params.without_imu);
   nh.getParam(ns + "/double_lidars", params.double_lidars);
+  nh.getParam(ns + "/argos_format", params.argos_format);
 
   return params;
 }
