@@ -88,12 +88,15 @@ void LaserSlamWorker::init(
   // }
 
   // Setup publishers.
-  trajectory_pub_ = nh.advertise<nav_msgs::Path>(params_.trajectory_pub_topic,
-                                                 kPublisherQueueSize, true);
+  trajectory_pub_ = nh.advertise<nav_msgs::Path>(params_.trajectory_pub_topic, kPublisherQueueSize, true);
 
-  if (params_.publish_local_map_on_laser_slam) {
-    local_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>(params_.local_map_on_laser_slam_pub_topic,
+  if (params_.publish_semantic_local_map) {
+    semantic_local_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>(params_.semantic_local_map_pub_topic,
                                                             kPublisherQueueSize);
+    if (params_.publish_semantic_full_map) {
+      semantic_full_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>(params_.semantic_full_map_pub_topic,
+                                                              kPublisherQueueSize);
+    }
   }
 
   // Setup services.
@@ -104,7 +107,8 @@ void LaserSlamWorker::init(
       "export_trajectory",
       &LaserSlamWorker::exportTrajectoryServiceCall, this);
 
-  voxel_filter_.setLeafSize(params_.voxel_size_m, params_.voxel_size_m,
+  voxel_filter_.setLeafSize(params_.voxel_size_m, 
+                            params_.voxel_size_m,
                             params_.voxel_size_m);
   voxel_filter_.setMinimumPointsNumberPerVoxel(params_.minimum_point_number_per_voxel);
 
@@ -412,36 +416,16 @@ void LaserSlamWorker::scanCallback_LabeledPointCloud(
       }
 
       publishTrajectories();
-      // publishMap();
       publishSemanticMap();
 
       // Get the last cloud in world frame.
       DataPoints new_fixed_cloud;
       laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
-
-      // Transform the cloud in sensor frame
-      //TODO(Renaud) move to a transformPointCloud() fct.
-      //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
-      //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
-      //
-      //      laser_slam::correctTransformationMatrix(&transformation_matrix);
-      //
-      //      laser_slam::PointMatcher::Transformation* rigid_transformation =
-      //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
-      //      CHECK_NOTNULL(rigid_transformation);
-      //
-      //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
-      //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
-      //
-      //
-      //      new_fixed_cloud_pub_.publish(
-      //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
-      //                                                             params_.sensor_frame,
-      //                                                             cloud_msg_in.header.stamp));
-
+      
       PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
 
-      {
+      // for the semantic local map
+      if (params_.publish_semantic_local_map) {
         PointICloud new_fixed_icloud_pcl = lpmToPcl_with_semantic(new_fixed_cloud);
         if (semantic_local_map_.size() > 0u) {
           semantic_local_map_ += new_fixed_icloud_pcl;
@@ -1128,7 +1112,7 @@ void LaserSlamWorker::publishMap() {
     //      convert_to_point_cloud_2_msg(filtered_map, params_.world_frame, &msg);
     //      point_cloud_pub_.publish(msg);
     //    }
-    if (params_.publish_local_map_on_laser_slam) {
+    if (params_.publish_local_map) {
       sensor_msgs::PointCloud2 msg;
       convert_to_point_cloud_2_msg(filtered_map, params_.world_frame, &msg);
       local_map_pub_.publish(msg);
@@ -1143,26 +1127,21 @@ void LaserSlamWorker::publishMap() {
 
 void LaserSlamWorker::publishSemanticMap() {
   // TODO make thread safe.
-  if (local_map_.size() > 0) {
+  if (semantic_local_map_.size() > 0) {
     PointICloud filtered_map;
     getFilteredSemanticMap(&filtered_map);
 
-    //maximumNumberPointsFilter(&filtered_map);
-    //    if (params_.publish_full_map) {
-    //      sensor_msgs::PointCloud2 msg;
-    //      convert_to_point_cloud_2_msg(filtered_map, params_.world_frame, &msg);
-    //      point_cloud_pub_.publish(msg);
-    //    }
-    if (params_.publish_local_map_on_laser_slam) {
-      sensor_msgs::PointCloud2 msg;
-      convert_to_point_cloud_2_msg(filtered_map, params_.world_frame, &msg);
-      local_map_pub_.publish(msg);
-    }
-    //    if (params_.publish_distant_map) {
-    //      sensor_msgs::PointCloud2 msg;
-    //      convert_to_point_cloud_2_msg(distant_map_, params_.world_frame, &msg);
-    //      distant_map_pub_.publish(msg);
-    //    }
+    if (params_.publish_semantic_local_map) {
+      sensor_msgs::PointCloud2 local_map_msg;
+      convert_to_point_cloud_2_msg(filtered_map, params_.world_frame, &local_map_msg);
+      semantic_local_map_pub_.publish(local_map_msg);
+
+      if (params_.publish_semantic_full_map) {
+        sensor_msgs::PointCloud2 full_map_msg;
+        convert_to_point_cloud_2_msg(semantic_full_map_, params_.world_frame, &full_map_msg);
+        semantic_full_map_pub_.publish(full_map_msg);
+      }   
+    }     
   }
 }
 
@@ -1297,10 +1276,20 @@ void LaserSlamWorker::getFilteredSemanticMap(PointICloud* filtered_map) {
 
   // Apply the cylindrical filter on the local map and get a copy.
   PointICloud semantic_local_map;
+  semantic_local_map = semantic_local_map_;
+  applyCylindricalFilter(current_position, params_.distance_to_consider_fixed, 40, false, &semantic_local_map_);
+
+  if (params_.publish_semantic_full_map)
   {
-    std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
-    semantic_local_map = semantic_local_map_;
-    applyCylindricalFilter(current_position, params_.distance_to_consider_fixed, 40, false, &semantic_local_map_);
+    // PointICloudPtr semantic_local_map_ptr(new PointICloud());
+    // pcl::copyPointCloud<PointI, PointI>(semantic_local_map, *semantic_local_map_ptr);
+
+    // PointICloud semantic_local_map_filtered;
+
+    // voxel_filter_with_semantic_.setInputCloud(semantic_local_map_ptr);
+    // voxel_filter_with_semantic_.filter(semantic_local_map_filtered);
+    
+    semantic_full_map_ += semantic_local_map;
   }
 
   *filtered_map = semantic_local_map;

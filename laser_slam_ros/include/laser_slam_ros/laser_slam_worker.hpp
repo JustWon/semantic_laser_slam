@@ -157,6 +157,8 @@ class LaserSlamWorker {
   // Publishers.
   ros::Publisher trajectory_pub_;
   ros::Publisher local_map_pub_;
+  ros::Publisher semantic_local_map_pub_;
+  ros::Publisher semantic_full_map_pub_;
   //  ros::Publisher odometry_trajectory_pub_;
   //  ros::Publisher point_cloud_pub_;
   //  ros::Publisher distant_map_pub_;
@@ -177,6 +179,7 @@ class LaserSlamWorker {
   std::vector<laser_slam_ros::PointCloud> local_map_queue_;
 
   laser_slam_ros::PointICloud semantic_local_map_;
+  laser_slam_ros::PointICloud semantic_full_map_;
 
   laser_slam_ros::PointCloud local_map_filtered_;
 

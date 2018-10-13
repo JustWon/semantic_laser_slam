@@ -49,13 +49,15 @@ struct LaserSlamWorkerParams {
   std::string odometry_trajectory_pub_topic;
   std::string full_map_pub_topic;
   std::string local_map_pub_topic;
-  std::string local_map_on_laser_slam_pub_topic;
+  std::string semantic_local_map_pub_topic;
+  std::string semantic_full_map_pub_topic;
   std::string distant_map_pub_topic;
   std::string get_laser_track_srv_topic;
 
   // Map publication.
   bool publish_local_map;
-  bool publish_local_map_on_laser_slam;
+  bool publish_semantic_local_map;
+  bool publish_semantic_full_map;
   bool publish_full_map;
   bool publish_distant_map;
   double map_publication_rate_hz;
@@ -84,7 +86,8 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
   nh.getParam(ns + "/world_frame", params.world_frame);
 
   nh.getParam(ns + "/publish_local_map", params.publish_local_map);
-  nh.getParam(ns + "/publish_local_map_on_laser_slam", params.publish_local_map_on_laser_slam);
+  nh.getParam(ns + "/publish_semantic_local_map", params.publish_semantic_local_map);
+  nh.getParam(ns + "/publish_semantic_full_map", params.publish_semantic_full_map);
   nh.getParam(ns + "/publish_full_map", params.publish_full_map);
   nh.getParam(ns + "/publish_distant_map", params.publish_distant_map);
   nh.getParam(ns + "/map_publication_rate_hz", params.map_publication_rate_hz);
@@ -95,7 +98,8 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
   nh.getParam(ns + "/odometry_trajectory_pub_topic", params.odometry_trajectory_pub_topic);
   nh.getParam(ns + "/full_map_pub_topic", params.full_map_pub_topic);
   nh.getParam(ns + "/local_map_pub_topic", params.local_map_pub_topic);
-  nh.getParam(ns + "/local_map_on_laser_slam_pub_topic", params.local_map_on_laser_slam_pub_topic);
+  nh.getParam(ns + "/semantic_local_map_pub_topic", params.semantic_local_map_pub_topic);
+  nh.getParam(ns + "/semantic_full_map_pub_topic", params.semantic_full_map_pub_topic);
   nh.getParam(ns + "/distant_map_pub_topic", params.distant_map_pub_topic);
   nh.getParam(ns + "/get_laser_track_srv_topic", params.get_laser_track_srv_topic);
 
