@@ -49,11 +49,13 @@ struct LaserSlamWorkerParams {
   std::string odometry_trajectory_pub_topic;
   std::string full_map_pub_topic;
   std::string local_map_pub_topic;
+  std::string local_map_on_laser_slam_pub_topic;
   std::string distant_map_pub_topic;
   std::string get_laser_track_srv_topic;
 
   // Map publication.
   bool publish_local_map;
+  bool publish_local_map_on_laser_slam;
   bool publish_full_map;
   bool publish_distant_map;
   double map_publication_rate_hz;
@@ -82,6 +84,7 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
   nh.getParam(ns + "/world_frame", params.world_frame);
 
   nh.getParam(ns + "/publish_local_map", params.publish_local_map);
+  nh.getParam(ns + "/publish_local_map_on_laser_slam", params.publish_local_map_on_laser_slam);
   nh.getParam(ns + "/publish_full_map", params.publish_full_map);
   nh.getParam(ns + "/publish_distant_map", params.publish_distant_map);
   nh.getParam(ns + "/map_publication_rate_hz", params.map_publication_rate_hz);
@@ -92,6 +95,7 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
   nh.getParam(ns + "/odometry_trajectory_pub_topic", params.odometry_trajectory_pub_topic);
   nh.getParam(ns + "/full_map_pub_topic", params.full_map_pub_topic);
   nh.getParam(ns + "/local_map_pub_topic", params.local_map_pub_topic);
+  nh.getParam(ns + "/local_map_on_laser_slam_pub_topic", params.local_map_on_laser_slam_pub_topic);
   nh.getParam(ns + "/distant_map_pub_topic", params.distant_map_pub_topic);
   nh.getParam(ns + "/get_laser_track_srv_topic", params.get_laser_track_srv_topic);
 
@@ -180,6 +184,21 @@ static PointCloud lpmToPcl(const laser_slam::PointMatcher::DataPoints& cloud_in)
   return cloud_out;
 }
 
+static PointICloud lpmToPcl_with_semantic(const laser_slam::PointMatcher::DataPoints& cloud_in) {
+  PointICloud cloud_out;
+  cloud_out.width = cloud_in.getNbPoints();
+  cloud_out.height = 1;
+  for (size_t i = 0u; i < cloud_in.getNbPoints(); ++i) {
+    PointI point;
+    point.x = cloud_in.features(0,i);
+    point.y = cloud_in.features(1,i);
+    point.z = cloud_in.features(2,i);
+    point.intensity = (cloud_in.descriptors(0,i) + 1)*1000;
+    cloud_out.push_back(point);
+  }
+  return cloud_out;
+}
+
 static void convert_to_pcl_point_cloud(const sensor_msgs::PointCloud2& cloud_message,
                                        PointICloud* converted) {
   pcl::PCLPointCloud2 pcl_point_cloud_2;
@@ -206,6 +225,37 @@ static void applyCylindricalFilter(const PclPoint& center, double radius_m,
                                    PointCloud* cloud) {
   CHECK_NOTNULL(cloud);
   PointCloud filtered_cloud;
+
+  const double radius_squared = pow(radius_m, 2.0);
+  const double height_halved_m = height_m / 2.0;
+
+  for (size_t i = 0u; i < cloud->size(); ++i) {
+    if (remove_point_inside) {
+      if ((pow(cloud->points[i].x - center.x, 2.0)
+          + pow(cloud->points[i].y - center.y, 2.0)) >= radius_squared ||
+          abs(cloud->points[i].z - center.z) >= height_halved_m) {
+        filtered_cloud.points.push_back(cloud->points[i]);
+      }
+    } else {
+      if ((pow(cloud->points[i].x - center.x, 2.0)
+          + pow(cloud->points[i].y - center.y, 2.0)) <= radius_squared &&
+          abs(cloud->points[i].z - center.z) <= height_halved_m) {
+        filtered_cloud.points.push_back(cloud->points[i]);
+      }
+    }
+  }
+
+  filtered_cloud.width = 1;
+  filtered_cloud.height = filtered_cloud.points.size();
+
+  *cloud = filtered_cloud;
+}
+
+static void applyCylindricalFilter(const PointI& center, double radius_m,
+                                   double height_m, bool remove_point_inside,
+                                   PointICloud* cloud) {
+  CHECK_NOTNULL(cloud);
+  PointICloud filtered_cloud;
 
   const double radius_squared = pow(radius_m, 2.0);
   const double height_halved_m = height_m / 2.0;

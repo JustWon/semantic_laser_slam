@@ -54,6 +54,7 @@ class LaserSlamWorker {
 
   /// \brief Publish the map.
   void publishMap();
+  void publishSemanticMap();
 
   /// \brief Publish the estimated trajectory and the odometry only based trajectory.
   void publishTrajectories();
@@ -62,6 +63,7 @@ class LaserSlamWorker {
 
   // Get a filtered map and apply map separation if desired.
   void getFilteredMap(laser_slam_ros::PointCloud* filtered_map);
+  void getFilteredSemanticMap(PointICloud* filtered_map);
 
   // Get a vector containing the optimized point clouds recorded since
   // the last call to this method. This call clears the point cloud queue.
@@ -135,7 +137,6 @@ class LaserSlamWorker {
   // Subscribers.
   ros::Subscriber scan_sub_;
 
-  // for double lidars
   typedef message_filters::sync_policies::ApproximateTime
       <laser_slam::LabeledPointCloud, sensor_msgs::Imu, sensor_msgs::NavSatFix> MySyncPolicy;
   typedef message_filters::Synchronizer<MySyncPolicy> Sync;
@@ -174,6 +175,8 @@ class LaserSlamWorker {
   // TODO(mattia): switch from local_map_ to local_map_queue_
   laser_slam_ros::PointCloud local_map_;
   std::vector<laser_slam_ros::PointCloud> local_map_queue_;
+
+  laser_slam_ros::PointICloud semantic_local_map_;
 
   laser_slam_ros::PointCloud local_map_filtered_;
 
