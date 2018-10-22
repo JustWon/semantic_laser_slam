@@ -29,6 +29,7 @@ add_doxygen(REQUIRED)
 add_message_files(
     FILES
     LabeledPointCloud.msg
+    imu.msg
 )
 
 generate_messages(

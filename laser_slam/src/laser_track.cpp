@@ -471,8 +471,7 @@ void LaserTrack::localScanToSubMap() {
 
   // Transform the last (parameters_.nscan_in_sub_map - 1) scans
   // in the frame of the second last scan.
-  const SE3 T_w_to_second_last_scan = trajectory_.evaluate(
-      laser_scans_[getNumScans() - 2u].time_ns);
+  const SE3 T_w_to_second_last_scan = trajectory_.evaluate(laser_scans_[getNumScans() - 2u].time_ns);
   DataPoints sub_map = laser_scans_[getNumScans() - 2u].scan;
   PointMatcher::TransformationParameters transformation_matrix;
   for (size_t i = 0u; i < std::min(getNumScans() - 2u, size_t(params_.nscan_in_sub_map - 1u)); ++i) {

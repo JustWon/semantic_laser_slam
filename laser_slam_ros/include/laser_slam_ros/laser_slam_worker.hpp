@@ -19,6 +19,7 @@
 #include <message_filters/sync_policies/approximate_time.h>
 
 #include <laser_slam/LabeledPointCloud.h>
+#include <laser_slam/imu.h>
 #include <sensor_msgs/NavSatFix.h>
 
 namespace laser_slam_ros {
@@ -35,15 +36,17 @@ class LaserSlamWorker {
 
   /// \brief Register the local scans to the sliding window estimator.
   void scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in);
-  void scanCallback_LabeledPointCloud(
+  void scanCallback_ARGOS_Format(
     const laser_slam::LabeledPointCloud::ConstPtr& labeled_cloud_msg_in, 
     const sensor_msgs::Imu::ConstPtr& imu_msg_in,
     const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in
     );
-
-  void scanCallback_without_IMU(const sensor_msgs::PointCloud2& cloud_msg_in);
-  void scanCallback_without_IMU_LabeledPointCloud(const laser_slam::LabeledPointCloud& labeled_cloud_msg_in);
-  void scanCallback_double_lidars(const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2);
+  void scanCallback_IRAP_Format(
+    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, 
+    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2,
+    const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in,
+    const laser_slam::imu::ConstPtr& imu_msg_in
+    );
 
   void mergeLidarPointCloud_SR(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
   void mergeLidarPointCloud_KAIST(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
@@ -137,18 +140,25 @@ class LaserSlamWorker {
   // Subscribers.
   ros::Subscriber scan_sub_;
 
+  // Synchronizer
   typedef message_filters::sync_policies::ApproximateTime
       <laser_slam::LabeledPointCloud, sensor_msgs::Imu, sensor_msgs::NavSatFix> MySyncPolicy;
-  typedef message_filters::Synchronizer<MySyncPolicy> Sync;
-  boost::shared_ptr<Sync> sync;
+  typedef message_filters::sync_policies::ApproximateTime
+      <sensor_msgs::PointCloud2, sensor_msgs::PointCloud2, sensor_msgs::NavSatFix, laser_slam::imu> IRAP_Format_SyncPolicy;
 
-  // message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub1;
-  // message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub2;
+  typedef message_filters::Synchronizer<MySyncPolicy> Sync;
+  typedef message_filters::Synchronizer<IRAP_Format_SyncPolicy> IRAP_Format_Sync;
+  boost::shared_ptr<Sync> sync;
+  boost::shared_ptr<IRAP_Format_Sync> irap_format_sync;
 
   // for the raw kitti format
   message_filters::Subscriber<laser_slam::LabeledPointCloud> *labeled_points_sub;
   message_filters::Subscriber<sensor_msgs::Imu> *imu_sub;
+  message_filters::Subscriber<laser_slam::imu> *imu_sub_IRAP;
   message_filters::Subscriber<sensor_msgs::NavSatFix> *gps_sub;
+
+  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub1;
+  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub2;
 
   float er = 6378137.0f;  // earth radius (approx.) in meters
   float scale = 0.0;

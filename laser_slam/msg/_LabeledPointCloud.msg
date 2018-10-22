@@ -9,7 +9,7 @@ sensor_msgs/Imu odometry
 
 # per-point object id
 # -1 if the point belongs to no object
-# int32[] object_id
+int32[] object_id
 
 # per-point semantic id
 #-1: Misc

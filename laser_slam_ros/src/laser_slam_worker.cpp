@@ -48,44 +48,32 @@ void LaserSlamWorker::init(
   // Get the LaserTrack object from the IncrementalEstimator.
   laser_track_ = incremental_estimator_->getLaserTrack(worker_id);
 
-  // Setup subscriber.
-  // if (params_.without_imu == false && params_.double_lidars == false) {
-  //   // scan_sub_ = nh.subscribe(params_.assembled_cloud_sub_topic, kScanSubscriberMessageQueueSize,
-  //   //                        &LaserSlamWorker::scanCallback_LabeledPointCloud, this);
-
-  //   scan_sub_ = nh.subscribe(params_.assembled_cloud_sub_topic, kScanSubscriberMessageQueueSize,
-  //                          &LaserSlamWorker::scanCallback, this);
-  // }
-  // else if (params_.without_imu == true && params_.double_lidars == false) {
-  //   scan_sub_ = nh.subscribe(params_.assembled_cloud_sub_topic, kScanSubscriberMessageQueueSize,
-  //                          &LaserSlamWorker::scanCallback_without_IMU_LabeledPointCloud, this);
-
-  //   // scan_sub_ = nh.subscribe(params_.assembled_cloud_sub_topic, kScanSubscriberMessageQueueSize,
-  //   //                        &LaserSlamWorker::scanCallback_without_IMU, this);
-  // }
-  // else if (params_.without_imu == true && params_.double_lidars == true) {
-  //   // multiple lidar topics
-  //   scan_sub1 = new message_filters::Subscriber<sensor_msgs::PointCloud2> (nh, params_.assembled_cloud_sub_topic, 1);
-  //   scan_sub2 = new message_filters::Subscriber<sensor_msgs::PointCloud2> (nh, params_.assembled_cloud_sub2_topic, 1);
-
-  //   sync.reset(new Sync(MySyncPolicy(10), *scan_sub1, *scan_sub2));      
-  //   sync->registerCallback(boost::bind(&LaserSlamWorker::scanCallback_double_lidars, this, _1, _2)); 
-  // }
-  
-  if (params_.argos_format)
+  // Setup subscriber.  
+  if (params_.ARGOS_format)
   {
     labeled_points_sub = new message_filters::Subscriber<laser_slam::LabeledPointCloud> (nh, "/labeled_points", 1);
     imu_sub = new message_filters::Subscriber<sensor_msgs::Imu> (nh, "/kitti/oxts/imu", 1);
     gps_sub = new message_filters::Subscriber<sensor_msgs::NavSatFix> (nh, "/kitti/oxts/gps/fix", 1);
 
     sync.reset(new Sync(MySyncPolicy(10), *labeled_points_sub, *imu_sub, *gps_sub)); 
-    sync->registerCallback(boost::bind(&LaserSlamWorker::scanCallback_LabeledPointCloud, this, _1, _2, _3));
+    sync->registerCallback(boost::bind(&LaserSlamWorker::scanCallback_ARGOS_Format, this, _1, _2, _3));
   }
-  // else
-  // {
-  //   scan_sub_ = nh.subscribe(params_.assembled_cloud_sub_topic, kScanSubscriberMessageQueueSize,
-  //                         &LaserSlamWorker::scanCallback, this);
-  // }
+  else if (params_.IRAP_format)
+  {
+    scan_sub1 = new message_filters::Subscriber<sensor_msgs::PointCloud2> (nh, params_.assembled_cloud_sub_topic, 1);
+    scan_sub2 = new message_filters::Subscriber<sensor_msgs::PointCloud2> (nh, params_.assembled_cloud_sub2_topic, 1);
+    gps_sub = new message_filters::Subscriber<sensor_msgs::NavSatFix> (nh, "/gps/fix", 1);
+    imu_sub_IRAP = new message_filters::Subscriber<laser_slam::imu> (nh, "/xsens_imu_data", 1);
+
+    irap_format_sync.reset(new IRAP_Format_Sync(IRAP_Format_SyncPolicy(10), 
+                            *scan_sub1, *scan_sub2, *gps_sub, *imu_sub_IRAP));
+    irap_format_sync->registerCallback(boost::bind(&LaserSlamWorker::scanCallback_IRAP_Format, this, _1, _2, _3, _4));  
+  }
+  else
+  {
+    scan_sub_ = nh.subscribe(params_.assembled_cloud_sub_topic, kScanSubscriberMessageQueueSize,
+                          &LaserSlamWorker::scanCallback, this);
+  }
 
   // Setup publishers.
   trajectory_pub_ = nh.advertise<nav_msgs::Path>(params_.trajectory_pub_topic, kPublisherQueueSize, true);
@@ -134,176 +122,177 @@ void LaserSlamWorker::init(
   //                                                               kPublisherQueueSize);
 }
 
-// void LaserSlamWorker::scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in) {
-//   std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
-//   if (!lock_scan_callback_) {
-//     if (tf_listener_.waitForTransform(params_.odom_frame, params_.sensor_frame,
-//                                       cloud_msg_in.header.stamp, ros::Duration(kTimeout_s))) {
-//       // Get the tf transform.
-//       tf::StampedTransform tf_transform;
-//       tf_listener_.lookupTransform(params_.odom_frame, params_.sensor_frame,
-//                                    cloud_msg_in.header.stamp, tf_transform);
+void LaserSlamWorker::scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in) {
+  std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
+  if (!lock_scan_callback_) {
+    if (tf_listener_.waitForTransform(params_.odom_frame, params_.sensor_frame,
+                                      cloud_msg_in.header.stamp, ros::Duration(kTimeout_s))) {
+      // Get the tf transform.
+      tf::StampedTransform tf_transform;
+      tf_listener_.lookupTransform(params_.odom_frame, params_.sensor_frame,
+                                   cloud_msg_in.header.stamp, tf_transform);
 
-//       bool process_scan = false;
-//       SE3 current_pose;
+      bool process_scan = false;
+      SE3 current_pose;
 
-//       if (!last_pose_set_) {
-//         process_scan = true;
-//         last_pose_set_ = true;
-//         last_pose_ = tfTransformToPose(tf_transform).T_w;
-//       } else {
-//         current_pose = tfTransformToPose(tf_transform).T_w;
-//         float dist_m = distanceBetweenTwoSE3(current_pose, last_pose_);
-//         if (dist_m > params_.minimum_distance_to_add_pose) {
-//           process_scan = true;
-//           last_pose_ = current_pose;
-//         }
-//       }
+      if (!last_pose_set_) {
+        process_scan = true;
+        last_pose_set_ = true;
+        last_pose_ = tfTransformToPose(tf_transform).T_w;
+      } else {
+        current_pose = tfTransformToPose(tf_transform).T_w;
+        float dist_m = distanceBetweenTwoSE3(current_pose, last_pose_);
+        if (dist_m > params_.minimum_distance_to_add_pose) {
+          process_scan = true;
+          last_pose_ = current_pose;
+        }
+      }
 
-//       if (process_scan) {
-//         // Convert input cloud to laser scan.
-//         LaserScan new_scan;
-//         new_scan.scan = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(cloud_msg_in);
-//         new_scan.time_ns = rosTimeToCurveTime(cloud_msg_in.header.stamp.toNSec());
+      if (process_scan) {
+        // Convert input cloud to laser scan.
+        LaserScan new_scan;
+        new_scan.scan = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(cloud_msg_in);
+        new_scan.time_ns = rosTimeToCurveTime(cloud_msg_in.header.stamp.toNSec());
 
-//         // Process the new scan and get new values and factors.
-//         gtsam::NonlinearFactorGraph new_factors;
-//         gtsam::Values new_values;
-//         bool is_prior;
-//         if (params_.use_odometry_information) {
-//           laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
-//         } 
-//         else {
-//           Pose new_pose;
+        // Process the new scan and get new values and factors.
+        gtsam::NonlinearFactorGraph new_factors;
+        gtsam::Values new_values;
+        bool is_prior;
+        if (params_.use_odometry_information) {
+          laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
+                                                &new_factors, &new_values, &is_prior);
+        } 
+        else {
+          Pose new_pose;
 
-//           Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
+          Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
 
-//           if (laser_track_->getNumScans() > 2u) {
-//             Pose current_pose = laser_track_->getCurrentPose();
+          if (laser_track_->getNumScans() > 2u) {
+            Pose current_pose = laser_track_->getCurrentPose();
 
-//             if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
-//               Time previous_pose_time = current_pose.time_ns -
-//                   (new_pose_time_ns - current_pose.time_ns);
-//               if (previous_pose_time >= laser_track_->getMinTime() &&
-//                   previous_pose_time <= laser_track_->getMaxTime()) {
-//                 SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
-//                 new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
-//                     previous_pose.inverse()  * current_pose.T_w ;
-//                 new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
-//                     new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
-//               }
-//             }
-//           }
+            if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
+              Time previous_pose_time = current_pose.time_ns -
+                  (new_pose_time_ns - current_pose.time_ns);
+              if (previous_pose_time >= laser_track_->getMinTime() &&
+                  previous_pose_time <= laser_track_->getMaxTime()) {
+                SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
+                new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
+                    previous_pose.inverse()  * current_pose.T_w ;
+                new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
+                    new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
+              }
+            }
+          }
 
-//           new_pose.time_ns = new_pose_time_ns;
-//           laser_track_->processPoseAndLaserScan(new_pose, new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
+          new_pose.time_ns = new_pose_time_ns;
+          laser_track_->processPoseAndLaserScan(new_pose, new_scan,
+                                                &new_factors, &new_values, &is_prior);
 
-//           last_pose_sent_to_laser_track_ = new_pose;
-//         }
+          last_pose_sent_to_laser_track_ = new_pose;
+        }
 
-//         // Process the new values and factors.
-//         gtsam::Values result;
-//         if (is_prior) {
-//           result = incremental_estimator_->registerPrior(new_factors, new_values, worker_id_);
-//         } else {
-//           result = incremental_estimator_->estimate(new_factors, new_values, new_scan.time_ns);
-//         }
+        // Process the new values and factors.
+        gtsam::Values result;
+        if (is_prior) {
+          result = incremental_estimator_->registerPrior(new_factors, new_values, worker_id_);
+        } else {
+          result = incremental_estimator_->estimate(new_factors, new_values, new_scan.time_ns);
+        }
 
-//         // Update the trajectory.
-//         laser_track_->updateFromGTSAMValues(result);
+        // Update the trajectory.
+        laser_track_->updateFromGTSAMValues(result);
 
-//         // Adjust the correction between the world and odom frames.
-//         Pose current_pose = laser_track_->getCurrentPose();
-//         SE3 T_odom_sensor = tfTransformToPose(tf_transform).T_w;
-//         SE3 T_w_sensor = current_pose.T_w;
-//         SE3 T_w_odom = T_w_sensor * T_odom_sensor.inverse();
+        // Adjust the correction between the world and odom frames.
+        Pose current_pose = laser_track_->getCurrentPose();
+        SE3 T_odom_sensor = tfTransformToPose(tf_transform).T_w;
+        SE3 T_w_sensor = current_pose.T_w;
+        SE3 T_w_odom = T_w_sensor * T_odom_sensor.inverse();
 
-//         Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> matrix;
+        Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> matrix;
 
-//         // TODO resize needed?
-//         matrix.resize(4, 4);
-//         matrix = T_w_odom.getTransformationMatrix().cast<float>();
+        // TODO resize needed?
+        matrix.resize(4, 4);
+        matrix = T_w_odom.getTransformationMatrix().cast<float>();
 
-//         {
-//           std::lock_guard<std::recursive_mutex> lock_world_to_odom(world_to_odom_mutex_);
-//           world_to_odom_ = PointMatcher_ros::eigenMatrixToStampedTransform<float>(
-//               matrix, params_.world_frame, params_.odom_frame, cloud_msg_in.header.stamp);
-//         }
+        {
+          std::lock_guard<std::recursive_mutex> lock_world_to_odom(world_to_odom_mutex_);
+          world_to_odom_ = PointMatcher_ros::eigenMatrixToStampedTransform<float>(
+              matrix, params_.world_frame, params_.odom_frame, cloud_msg_in.header.stamp);
+        }
 
-//         publishTrajectories();
+        publishTrajectories();
 
-//         // Get the last cloud in world frame.
-//         DataPoints new_fixed_cloud;
-//         laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
+        // Get the last cloud in world frame.
+        DataPoints new_fixed_cloud;
+        laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
 
-//         // Transform the cloud in sensor frame
-//         //TODO(Renaud) move to a transformPointCloud() fct.
-//         //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
-//         //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
-//         //
-//         //      laser_slam::correctTransformationMatrix(&transformation_matrix);
-//         //
-//         //      laser_slam::PointMatcher::Transformation* rigid_transformation =
-//         //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
-//         //      CHECK_NOTNULL(rigid_transformation);
-//         //
-//         //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
-//         //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
-//         //
-//         //
-//         //      new_fixed_cloud_pub_.publish(
-//         //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
-//         //                                                             params_.sensor_frame,
-//         //                                                             cloud_msg_in.header.stamp));
+        // Transform the cloud in sensor frame
+        //TODO(Renaud) move to a transformPointCloud() fct.
+        //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
+        //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
+        //
+        //      laser_slam::correctTransformationMatrix(&transformation_matrix);
+        //
+        //      laser_slam::PointMatcher::Transformation* rigid_transformation =
+        //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
+        //      CHECK_NOTNULL(rigid_transformation);
+        //
+        //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
+        //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
+        //
+        //
+        //      new_fixed_cloud_pub_.publish(
+        //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
+        //                                                             params_.sensor_frame,
+        //                                                             cloud_msg_in.header.stamp));
 
-//         PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
+        PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
 
-//         if (params_.remove_ground_from_local_map) {
-//           const double robot_height_m = current_pose.T_w.getPosition()(2);
-//           PointCloud new_fixed_cloud_no_ground;
-//           for (size_t i = 0u; i < new_fixed_cloud_pcl.size(); ++i) {
-//             if (new_fixed_cloud_pcl.points[i].z > robot_height_m -
-//                 params_.ground_distance_to_robot_center_m) {
-//               new_fixed_cloud_no_ground.push_back(new_fixed_cloud_pcl.points[i]);
-//             }
-//           }
-//           new_fixed_cloud_no_ground.width = 1;
-//           new_fixed_cloud_no_ground.height = new_fixed_cloud_no_ground.points.size();
-//           new_fixed_cloud_pcl = new_fixed_cloud_no_ground;
-//         }
+        if (params_.remove_ground_from_local_map) {
+          const double robot_height_m = current_pose.T_w.getPosition()(2);
+          PointCloud new_fixed_cloud_no_ground;
+          for (size_t i = 0u; i < new_fixed_cloud_pcl.size(); ++i) {
+            if (new_fixed_cloud_pcl.points[i].z > robot_height_m -
+                params_.ground_distance_to_robot_center_m) {
+              new_fixed_cloud_no_ground.push_back(new_fixed_cloud_pcl.points[i]);
+            }
+          }
+          new_fixed_cloud_no_ground.width = 1;
+          new_fixed_cloud_no_ground.height = new_fixed_cloud_no_ground.points.size();
+          new_fixed_cloud_pcl = new_fixed_cloud_no_ground;
+        }
 
-//         // Add the local scans to the full point cloud.
-//         if (params_.create_filtered_map) {
-//           if (new_fixed_cloud_pcl.size() > 0u) {
-//             std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
-//             if (local_map_.size() > 0u) {
-//               local_map_ += new_fixed_cloud_pcl;
-//             } else {
-//               local_map_ = new_fixed_cloud_pcl;
-//             }
-//             local_map_queue_.push_back(new_fixed_cloud_pcl);
-//           }
-//         }
-//       }
-//     } else {
-//       ROS_WARN_STREAM("[SegMapper] Timeout while waiting between " + params_.odom_frame  +
-//                       " and " + params_.sensor_frame  + ".");
-//     }
-//   }
-// }
+        // Add the local scans to the full point cloud.
+        if (params_.create_filtered_map) {
+          if (new_fixed_cloud_pcl.size() > 0u) {
+            std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
+            if (local_map_.size() > 0u) {
+              local_map_ += new_fixed_cloud_pcl;
+            } else {
+              local_map_ = new_fixed_cloud_pcl;
+            }
+            local_map_queue_.push_back(new_fixed_cloud_pcl);
+          }
+        }
+      }
+    } else {
+      ROS_WARN_STREAM("[SegMapper] Timeout while waiting between " + params_.odom_frame  +
+                      " and " + params_.sensor_frame  + ".");
+    }
+  }
+}
 
-void LaserSlamWorker::scanCallback_LabeledPointCloud(
+void LaserSlamWorker::scanCallback_ARGOS_Format(
   const laser_slam::LabeledPointCloud::ConstPtr& labeled_cloud_msg_in, 
   const sensor_msgs::Imu::ConstPtr& imu_msg_in,
   const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in) 
 {
-  const sensor_msgs::PointCloud2& cloud_msg_in = labeled_cloud_msg_in->point_cloud;
-  const std::vector<int> semantic_id = labeled_cloud_msg_in->semantic_id;
-
   std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
   if (!lock_scan_callback_) {
+    
+    const sensor_msgs::PointCloud2& cloud_msg_in = labeled_cloud_msg_in->point_cloud;
+    const std::vector<int> semantic_id = labeled_cloud_msg_in->semantic_id;
+
     geometry_msgs::Quaternion orientation = imu_msg_in->orientation;
 
     // Use a Mercator projection to get the translation vector
@@ -357,34 +346,6 @@ void LaserSlamWorker::scanCallback_LabeledPointCloud(
         laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
                                               &new_factors, &new_values, &is_prior);
       } 
-      // else {
-      //   Pose new_pose;
-
-      //   Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
-
-      //   if (laser_track_->getNumScans() > 2u) {
-      //     Pose current_pose = laser_track_->getCurrentPose();
-
-      //     if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
-      //       Time previous_pose_time = current_pose.time_ns -
-      //           (new_pose_time_ns - current_pose.time_ns);
-      //       if (previous_pose_time >= laser_track_->getMinTime() &&
-      //           previous_pose_time <= laser_track_->getMaxTime()) {
-      //         SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
-      //         new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
-      //             previous_pose.inverse()  * current_pose.T_w ;
-      //         new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
-      //             new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
-      //       }
-      //     }
-      //   }
-
-      //   new_pose.time_ns = new_pose_time_ns;
-      //   laser_track_->processPoseAndLaserScan(new_pose, new_scan,
-      //                                         &new_factors, &new_values, &is_prior);
-
-      //   last_pose_sent_to_laser_track_ = new_pose;
-      // }
 
       // Process the new values and factors.
       gtsam::Values result;
@@ -464,552 +425,259 @@ void LaserSlamWorker::scanCallback_LabeledPointCloud(
   }
 }
 
-// void LaserSlamWorker::scanCallback_without_IMU(const sensor_msgs::PointCloud2& cloud_msg_in) {
-//   std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
+void LaserSlamWorker::mergeLidarPointCloud_KAIST(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2) 
+{
+  pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn1;
+  pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn2;
 
-//   if (!lock_scan_callback_) {
+  Eigen::Matrix4f transform_right = Eigen::Matrix4f::Identity();
+  transform_right(0,0) = -0.499043;
+  transform_right(0,1) = 0.716822;
+  transform_right(0,2) = -0.486952;
+  transform_right(1,0) = -0.508527;
+  transform_right(1,1) = -0.697242; 
+  transform_right(1,2) = -0.505227;
+  transform_right(2,0) = -0.701681;
+  transform_right(2,1) = -0.00450156;
+  transform_right(2,2) = 0.712477;;
+
+  transform_right(0,3) = -0.298725;
+  transform_right(1,3) = -0.422423;
+  transform_right(2,3) = 1.95223;
+
+  Eigen::Matrix4f transform_left = Eigen::Matrix4f::Identity();
+  transform_left(0,0) = -0.522638;
+  transform_left(0,1) = -0.689933;
+  transform_left(0,2) = -0.500841;
+  transform_left(1,0) = 0.480742;
+  transform_left(1,1) = -0.723649;
+  transform_left(1,2) = 0.495197;
+  transform_left(2,0) = -0.704085;
+  transform_left(2,1) = 0.0180335;
+  transform_left(2,2) = 0.709886;
+
+  transform_left(0,3) = -0.318732;
+  transform_left(1,3) = 0.389231;
+  transform_left(2,3) = 1.94661;
+
+  pcl::transformPointCloud(laserCloudIn1, transformed_laserCloudIn1, transform_right);
+  pcl::transformPointCloud(laserCloudIn2, transformed_laserCloudIn2, transform_left);
   
-//     if (!params_.double_lidars) {
+  pcl::PointCloud<pcl::PointXYZ> mergedCloud;
+  mergedCloud = transformed_laserCloudIn1 + transformed_laserCloudIn2;
 
-//       // Get the tf transform.
-//       tf::StampedTransform tf_transform(tf::Transform(tf::Quaternion(0,0,0,1), tf::Vector3(0,0,0)), cloud_msg_in.header.stamp, "frame1", "frame2");
+  pcl::toROSMsg(mergedCloud, merged_cloud_msg_in);
+}
+
+void LaserSlamWorker::mergeLidarPointCloud_SR(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2) 
+{
+  pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn1;
+  pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn2;
+
+  Eigen::Affine3f aff1 = Eigen::Affine3f::Identity();
+  aff1.rotate(Eigen::AngleAxisf(M_PI, Eigen::Vector3f(3,0,-3)));
+  aff1.translation() = Eigen::Vector3f(0.0,-0.375,1.76);
+
+  Eigen::Affine3f aff2 = Eigen::Affine3f::Identity();
+  aff2.rotate(Eigen::AngleAxisf(M_PI, Eigen::Vector3f(-1,0,-3)));
+  aff2.translation() = Eigen::Vector3f(-0.1,0.375,1.76);
+
+  pcl::transformPointCloud(laserCloudIn1, transformed_laserCloudIn1, aff1);
+  pcl::transformPointCloud(laserCloudIn2, transformed_laserCloudIn2, aff2);
+
+  pcl::PointCloud<pcl::PointXYZ> mergedCloud;
+  mergedCloud = transformed_laserCloudIn1 + transformed_laserCloudIn2;
+
+  pcl::toROSMsg(mergedCloud, merged_cloud_msg_in);
+}
+
+void LaserSlamWorker::scanCallback_IRAP_Format(
+  const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, 
+  const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2,
+  const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in,
+  const laser_slam::imu::ConstPtr& imu_msg_in
+  )
+{ 
+  // scan callback
+  std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
+
+  if (!lock_scan_callback_) {
+
+    // merge lidar scans
+    pcl::PointCloud<pcl::PointXYZ> laserCloudIn1;
+    pcl::fromROSMsg(*laserCloudMsg1, laserCloudIn1);
+
+    pcl::PointCloud<pcl::PointXYZ> laserCloudIn2;
+    pcl::fromROSMsg(*laserCloudMsg2, laserCloudIn2);
+
+    mergeLidarPointCloud_KAIST(laserCloudIn1,laserCloudIn2);
     
-//       bool process_scan = false;
-//       SE3 current_pose;
-//       // initially once
-//       if (!last_pose_set_) {
-//         process_scan = true;
-//         last_pose_set_ = true;
-//         last_pose_ = tfTransformToPose(tf_transform).T_w;
-//       } else { // after all
-//         current_pose = tfTransformToPose(tf_transform).T_w;
-//         float dist_m = distanceBetweenTwoSE3(current_pose, last_pose_);
-//         if (dist_m > params_.minimum_distance_to_add_pose) {
-//           process_scan = true;
-//           last_pose_ = current_pose;
-//         }
-//       }
+    geometry_msgs::Quaternion orientation = imu_msg_in->quaternion_data;
 
-//       if (!params_.double_lidars) {
-//         // Convert input cloud to laser scan.
-//         LaserScan new_scan;
-//         new_scan.scan = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(cloud_msg_in);
-//         new_scan.time_ns = rosTimeToCurveTime(cloud_msg_in.header.stamp.toNSec());
+    // Use a Mercator projection to get the translation vector
+    float lon = gps_msg_in->longitude;
+    float lat = gps_msg_in->latitude;
+    float alt = gps_msg_in->altitude;
 
-//         // Process the new scan and get new values and factors.
-//         gtsam::NonlinearFactorGraph new_factors;
-//         gtsam::Values new_values;
-//         bool is_prior;
+    if (scale == 0)
+      scale = cos(lat * M_PI / 180.0f);
+
+    float tx = scale * er * lon * M_PI / 180.0f;
+    float ty = scale * er * log(tan((90.0f + lat) * M_PI / 360.0f));
+    float tz = alt;
+
+    if(origin == Eigen::Vector3f(0,0,0))
+      origin = Eigen::Vector3f(tx,ty,tz);
+
+    tf::StampedTransform tf_transform(
+      tf::Transform(tf::Quaternion(orientation.x,orientation.y,orientation.z,orientation.w),
+      tf::Vector3(tx-origin[0],ty-origin[1],tz-origin[2])), 
+      merged_cloud_msg_in.header.stamp, params_.world_frame, params_.odom_frame
+    ) ;
+
+    bool process_scan = false;
+    SE3 current_pose;
+
+    if (!last_pose_set_) {
+      process_scan = true;
+      last_pose_set_ = true;
+      last_pose_ = tfTransformToPose(tf_transform).T_w;
+    } else {
+      current_pose = tfTransformToPose(tf_transform).T_w;
+      float dist_m = distanceBetweenTwoSE3(current_pose, last_pose_);
+      if (dist_m > params_.minimum_distance_to_add_pose) {
+        process_scan = true;
+        last_pose_ = current_pose;
+      }
+    }
+
+    if (process_scan) {
+      // Convert input cloud to laser scan.
+      LaserScan new_scan;
+      new_scan.scan = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(merged_cloud_msg_in);
+      new_scan.time_ns = rosTimeToCurveTime(merged_cloud_msg_in.header.stamp.toNSec());
+
+      // Process the new scan and get new values and factors.
+      gtsam::NonlinearFactorGraph new_factors;
+      gtsam::Values new_values;
+      bool is_prior;
+      if (params_.use_odometry_information) {
+        laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
+                                              &new_factors, &new_values, &is_prior);
+      } 
+      // else {
+      //   Pose new_pose;
+
+      //   Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
+
+      //   if (laser_track_->getNumScans() > 2u) {
+      //     Pose current_pose = laser_track_->getCurrentPose();
+
+      //     if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
+      //       Time previous_pose_time = current_pose.time_ns - (new_pose_time_ns - current_pose.time_ns);
+      //       if (previous_pose_time >= laser_track_->getMinTime() &&
+      //           previous_pose_time <= laser_track_->getMaxTime()) {
+      //         SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
+      //         new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
+      //             previous_pose.inverse()  * current_pose.T_w ;
+      //         new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
+      //             new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
+      //       }
+      //     }
+      //   }
+
+      //   new_pose.time_ns = new_pose_time_ns;
+      //   laser_track_->processPoseAndLaserScan(new_pose, new_scan,
+      //                                         &new_factors, &new_values, &is_prior);
+
+      //   last_pose_sent_to_laser_track_ = new_pose;
+      // }
+
+      // Process the new values and factors.
+      gtsam::Values result;
+      if (is_prior) {
+        result = incremental_estimator_->registerPrior(new_factors, new_values, worker_id_);
+      } else {
+        result = incremental_estimator_->estimate(new_factors, new_values, new_scan.time_ns);
+      }
+
+      // Update the trajectory.
+      laser_track_->updateFromGTSAMValues(result);
+
+      // Adjust the correction between the world and odom frames.
+      Pose current_pose = laser_track_->getCurrentPose();
+      SE3 T_odom_sensor = tfTransformToPose(tf_transform).T_w;
+      SE3 T_w_sensor = current_pose.T_w;
+      SE3 T_w_odom = T_w_sensor * T_odom_sensor.inverse();
+
+      Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> matrix;
+
+      // TODO resize needed?
+      matrix.resize(4, 4);
+      matrix = T_w_odom.getTransformationMatrix().cast<float>();
+
+      {
+        std::lock_guard<std::recursive_mutex> lock_world_to_odom(world_to_odom_mutex_);
+        world_to_odom_ = PointMatcher_ros::eigenMatrixToStampedTransform<float>(
+            matrix, params_.world_frame, params_.odom_frame, merged_cloud_msg_in.header.stamp);
+      }
+
+      publishTrajectories();
+
+      // Get the last cloud in world frame.
+      DataPoints new_fixed_cloud;
+      laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
+
+      // // Transform the cloud in sensor frame
+      // TODO(Renaud) move to a transformPointCloud() fct.
+      //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
+      //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
       
-//         if (params_.use_odometry_information) {
-//           laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
-//         } else {
-//           Pose new_pose;
-
-//           Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
-
-//           if (laser_track_->getNumScans() > 2u) {
-//             Pose current_pose = laser_track_->getCurrentPose();
-
-//             if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
-//               Time previous_pose_time = current_pose.time_ns - (new_pose_time_ns - current_pose.time_ns);
-//               if (previous_pose_time >= laser_track_->getMinTime() &&
-//                   previous_pose_time <= laser_track_->getMaxTime()) {
-//                 SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
-//                 new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
-//                     previous_pose.inverse()  * current_pose.T_w ;
-//                 new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
-//                     new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
-//               }
-//             }
-//           }
-
-//           new_pose.time_ns = new_pose_time_ns;
-//           laser_track_->processPoseAndLaserScan(new_pose, new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
-
-//           last_pose_sent_to_laser_track_ = new_pose;
-//         }
-
-//         // Process the new values and factors.
-//         gtsam::Values result;
-//         if (is_prior) {
-//           result = incremental_estimator_->registerPrior(new_factors, new_values, worker_id_);
-//         } else {
-//           result = incremental_estimator_->estimate(new_factors, new_values, new_scan.time_ns);
-//         }
-
-//         // Update the trajectory.
-//         laser_track_->updateFromGTSAMValues(result);
-
-//         // Adjust the correction between the world and odom frames.
-//         Pose current_pose = laser_track_->getCurrentPose();
-//         SE3 T_odom_sensor = tfTransformToPose(tf_transform).T_w;
-//         SE3 T_w_sensor = current_pose.T_w;
-//         SE3 T_w_odom = T_w_sensor * T_odom_sensor.inverse();
-
-//         Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> matrix;
-
-//         // TODO resize needed?
-//         matrix.resize(4, 4);
-//         matrix = T_w_odom.getTransformationMatrix().cast<float>();
-
-//         {
-//           std::lock_guard<std::recursive_mutex> lock_world_to_odom(world_to_odom_mutex_);
-//           world_to_odom_ = PointMatcher_ros::eigenMatrixToStampedTransform<float>(
-//               matrix, params_.world_frame, params_.odom_frame, cloud_msg_in.header.stamp);
-//         }
-
-//         publishTrajectories();
-
-//         // Get the last cloud in world frame.
-//         DataPoints new_fixed_cloud;
-//         laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
-
-//         // Transform the cloud in sensor frame
-//         //TODO(Renaud) move to a transformPointCloud() fct.
-//         //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
-//         //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
-//         //
-//         //      laser_slam::correctTransformationMatrix(&transformation_matrix);
-//         //
-//         //      laser_slam::PointMatcher::Transformation* rigid_transformation =
-//         //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
-//         //      CHECK_NOTNULL(rigid_transformation);
-//         //
-//         //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
-//         //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
-//         //
-//         //
-//         //      new_fixed_cloud_pub_.publish(
-//         //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
-//         //                                                             params_.sensor_frame,
-//         //                                                             cloud_msg_in.header.stamp));
-
-//         PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
-
-//         if (params_.remove_ground_from_local_map) {
-//           const double robot_height_m = current_pose.T_w.getPosition()(2);
-//           PointCloud new_fixed_cloud_no_ground;
-//           for (size_t i = 0u; i < new_fixed_cloud_pcl.size(); ++i) {
-//             if (new_fixed_cloud_pcl.points[i].z > robot_height_m - params_.ground_distance_to_robot_center_m) {
-//               new_fixed_cloud_no_ground.push_back(new_fixed_cloud_pcl.points[i]);
-//             }
-//           }
-//           new_fixed_cloud_no_ground.width = 1;
-//           new_fixed_cloud_no_ground.height = new_fixed_cloud_no_ground.points.size();
-//           new_fixed_cloud_pcl = new_fixed_cloud_no_ground;
-//         }
-
-//         // Add the local scans to the full point cloud.
-//         if (params_.create_filtered_map) {
-//           if (new_fixed_cloud_pcl.size() > 0u) {
-//             std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
-//             if (local_map_.size() > 0u) {
-//               local_map_ += new_fixed_cloud_pcl;
-//             } else {
-//               local_map_ = new_fixed_cloud_pcl;
-//             }
-//             local_map_queue_.push_back(new_fixed_cloud_pcl);
-//           }
-//         }
-//       }
-//     }
-//   }
-// }
-
-// void LaserSlamWorker::scanCallback_without_IMU_LabeledPointCloud(const laser_slam::LabeledPointCloud& labeled_cloud_msg_in) {
-
-//   const sensor_msgs::PointCloud2& cloud_msg_in = labeled_cloud_msg_in.point_cloud;
-
-//   std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
-
-//   if (!lock_scan_callback_) {
-  
-//     if (params_.without_imu) {
-//       // Get the tf transform.
-//       tf::StampedTransform tf_transform(
-//         tf::Transform(tf::Quaternion(0,0,0,1), tf::Vector3(1,0,0)), 
-//         labeled_cloud_msg_in.time_stamp, params_.odom_frame, params_.sensor_frame
-//       );
-    
-//       bool process_scan = false;
-//       SE3 current_pose;
-//       // initially once
-//       if (!last_pose_set_) {
-//         process_scan = true;
-//         last_pose_set_ = true;
-//         last_pose_ = tfTransformToPose(tf_transform).T_w;
-//       } else { // after all
-//         current_pose = tfTransformToPose(tf_transform).T_w;
-//         float dist_m = distanceBetweenTwoSE3(current_pose, last_pose_);
-//         if (dist_m > params_.minimum_distance_to_add_pose) {
-//           process_scan = true;
-//           last_pose_ = current_pose;
-//         }
-//       }
-
-//       if (params_.without_imu) {
-//         // Convert input cloud to laser scan.
-//         LaserScan new_scan;
-//         new_scan.scan = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(cloud_msg_in);
-//         new_scan.time_ns = rosTimeToCurveTime(cloud_msg_in.header.stamp.toNSec());
-
-//         // Process the new scan and get new values and factors.
-//         gtsam::NonlinearFactorGraph new_factors;
-//         gtsam::Values new_values;
-//         bool is_prior;
+      //      laser_slam::correctTransformationMatrix(&transformation_matrix);
       
-//         if (params_.use_odometry_information) {
-//           laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
-//         } else {
-//           Pose new_pose;
-
-//           Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
-
-//           if (laser_track_->getNumScans() > 2u) {
-//             Pose current_pose = laser_track_->getCurrentPose();
-
-//             if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
-//               Time previous_pose_time = current_pose.time_ns - (new_pose_time_ns - current_pose.time_ns);
-//               if (previous_pose_time >= laser_track_->getMinTime() &&
-//                   previous_pose_time <= laser_track_->getMaxTime()) {
-//                 SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
-//                 new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
-//                     previous_pose.inverse()  * current_pose.T_w ;
-//                 new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
-//                     new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
-//               }
-//             }
-//           }
-
-//           new_pose.time_ns = new_pose_time_ns;
-//           laser_track_->processPoseAndLaserScan(new_pose, new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
-
-//           last_pose_sent_to_laser_track_ = new_pose;
-//         }
-
-//         // Process the new values and factors.
-//         gtsam::Values result;
-//         if (is_prior) {
-//           result = incremental_estimator_->registerPrior(new_factors, new_values, worker_id_);
-//         } else {
-//           result = incremental_estimator_->estimate(new_factors, new_values, new_scan.time_ns);
-//         }
-
-//         // Update the trajectory.
-//         laser_track_->updateFromGTSAMValues(result);
-
-//         // Adjust the correction between the world and odom frames.
-//         Pose current_pose = laser_track_->getCurrentPose();
-//         SE3 T_odom_sensor = tfTransformToPose(tf_transform).T_w;
-//         SE3 T_w_sensor = current_pose.T_w;
-//         SE3 T_w_odom = T_w_sensor * T_odom_sensor.inverse();
-
-//         Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> matrix;
-
-//         // TODO resize needed?
-//         matrix.resize(4, 4);
-//         matrix = T_w_odom.getTransformationMatrix().cast<float>();
-
-//         {
-//           std::lock_guard<std::recursive_mutex> lock_world_to_odom(world_to_odom_mutex_);
-//           world_to_odom_ = PointMatcher_ros::eigenMatrixToStampedTransform<float>(
-//               matrix, params_.world_frame, params_.odom_frame, cloud_msg_in.header.stamp);
-//         }
-
-//         publishTrajectories();
-
-//         // Get the last cloud in world frame.
-//         DataPoints new_fixed_cloud;
-//         laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
-
-//         // Transform the cloud in sensor frame
-//         //TODO(Renaud) move to a transformPointCloud() fct.
-//         //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
-//         //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
-//         //
-//         //      laser_slam::correctTransformationMatrix(&transformation_matrix);
-//         //
-//         //      laser_slam::PointMatcher::Transformation* rigid_transformation =
-//         //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
-//         //      CHECK_NOTNULL(rigid_transformation);
-//         //
-//         //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
-//         //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
-//         //
-//         //
-//         //      new_fixed_cloud_pub_.publish(
-//         //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
-//         //                                                             params_.sensor_frame,
-//         //                                                             cloud_msg_in.header.stamp));
-
-//         PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
-
-//         if (params_.remove_ground_from_local_map) {
-//           const double robot_height_m = current_pose.T_w.getPosition()(2);
-//           PointCloud new_fixed_cloud_no_ground;
-//           for (size_t i = 0u; i < new_fixed_cloud_pcl.size(); ++i) {
-//             if (new_fixed_cloud_pcl.points[i].z > robot_height_m - params_.ground_distance_to_robot_center_m) {
-//               new_fixed_cloud_no_ground.push_back(new_fixed_cloud_pcl.points[i]);
-//             }
-//           }
-//           new_fixed_cloud_no_ground.width = 1;
-//           new_fixed_cloud_no_ground.height = new_fixed_cloud_no_ground.points.size();
-//           new_fixed_cloud_pcl = new_fixed_cloud_no_ground;
-//         }
-
-//         // Add the local scans to the full point cloud.
-//         if (params_.create_filtered_map) {
-//           if (new_fixed_cloud_pcl.size() > 0u) {
-//             std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
-//             if (local_map_.size() > 0u) {
-//               local_map_ += new_fixed_cloud_pcl;
-//             } else {
-//               local_map_ = new_fixed_cloud_pcl;
-//             }
-//             local_map_queue_.push_back(new_fixed_cloud_pcl);
-//           }
-//         }
-//       }
-//     }
-//   }
-// }
-
-
-// void LaserSlamWorker::mergeLidarPointCloud_KAIST(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2) 
-// {
-//   pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn1;
-//   pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn2;
-
-//   Eigen::Matrix4f transform_1 = Eigen::Matrix4f::Identity();
-//   transform_1(0,0) = -0.49698221;
-//   transform_1(0,1) = 0.7153226;
-//   transform_1(0,2) = -0.49124562;
-//   transform_1(1,0) = -0.51499978;
-//   transform_1(1,1) = -0.69876646;
-//   transform_1(1,2) = -0.49648833;
-//   transform_1(2,0) = -0.69841529;
-//   transform_1(2,1) = 0.00624552;
-//   transform_1(2,2) = 0.71566548;
-
-//   transform_1(0,3) = -0.506;
-//   transform_1(1,3) = -0.488;
-//   transform_1(2,3) = 1.939;
-//   pcl::transformPointCloud(laserCloudIn1, transformed_laserCloudIn1, transform_1);
-
-//   Eigen::Matrix4f transform_2 = Eigen::Matrix4f::Identity();
-//   transform_2(0,0) = -0.51858729;
-//   transform_2(0,1) = -0.69628755;
-//   transform_2(0,2) = -0.49623671;
-//   transform_2(1,0) = 0.48359047;
-//   transform_2(1,1) = -0.71748365;
-//   transform_2(1,2) = 0.50135563;
-//   transform_2(2,0) = -0.70512941;
-//   transform_2(2,1) = 0.02002131;
-//   transform_2(2,2) = 0.70879592;
-
-//   transform_2(0,3) = -0.505;
-//   transform_2(1,3) = 0.327;
-//   transform_2(2,3) = 1.926;
-//   pcl::transformPointCloud(laserCloudIn2, transformed_laserCloudIn2, transform_2);
-
-//   pcl::PointCloud<pcl::PointXYZ> mergedCloud;
-//   mergedCloud = transformed_laserCloudIn1 + transformed_laserCloudIn2;
-
-//   pcl::toROSMsg(mergedCloud, merged_cloud_msg_in);
-// }
-
-// void LaserSlamWorker::mergeLidarPointCloud_SR(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2) 
-// {
-//   pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn1;
-//   pcl::PointCloud<pcl::PointXYZ> transformed_laserCloudIn2;
-
-//   Eigen::Affine3f aff1 = Eigen::Affine3f::Identity();
-//   // aff1.rotate(Eigen::AngleAxisf(M_PI, Eigen::Vector3f(3,0,-3)));
-//   aff1.translation() = Eigen::Vector3f(0.0,-0.375,1.76);
-
-//   Eigen::Affine3f aff2 = Eigen::Affine3f::Identity();
-//   // aff2.rotate(Eigen::AngleAxisf(M_PI, Eigen::Vector3f(-1,0,-3)));
-//   aff2.translation() = Eigen::Vector3f(-0.1,0.375,1.76);
-
-//   pcl::transformPointCloud(laserCloudIn1, transformed_laserCloudIn1, aff1);
-//   pcl::transformPointCloud(laserCloudIn2, transformed_laserCloudIn2, aff2);
-
-//   pcl::PointCloud<pcl::PointXYZ> mergedCloud;
-//   mergedCloud = transformed_laserCloudIn1 + transformed_laserCloudIn2;
-
-//   pcl::toROSMsg(mergedCloud, merged_cloud_msg_in);
-// }
-
-// void LaserSlamWorker::scanCallback_double_lidars(const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2)
-// { 
-//   // merge lidar scans
-//   pcl::PointCloud<pcl::PointXYZ> laserCloudIn1;
-//   pcl::fromROSMsg(*laserCloudMsg1, laserCloudIn1);
-
-//   pcl::PointCloud<pcl::PointXYZ> laserCloudIn2;
-//   pcl::fromROSMsg(*laserCloudMsg2, laserCloudIn2);
-
-//   mergeLidarPointCloud_SR(laserCloudIn1,laserCloudIn2);
-
-//   // scan callback
-//   std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
-
-//   if (!lock_scan_callback_) {
-  
-//     if (params_.double_lidars) {
-
-//       // Get the tf transform.
-//       tf::StampedTransform tf_transform(tf::Transform(tf::Quaternion(0,0,0,1), tf::Vector3(0,0,0)), merged_cloud_msg_in.header.stamp, "frame1", "frame2");
-    
-//       bool process_scan = false;
-//       SE3 current_pose;
-//       // initially once
-//       if (!last_pose_set_) {
-//         process_scan = true;
-//         last_pose_set_ = true;
-//         last_pose_ = tfTransformToPose(tf_transform).T_w;
-//       } else { // after all
-//         current_pose = tfTransformToPose(tf_transform).T_w;
-//         float dist_m = distanceBetweenTwoSE3(current_pose, last_pose_);
-//         if (dist_m > params_.minimum_distance_to_add_pose) {
-//           process_scan = true;
-//           last_pose_ = current_pose;
-//         }
-//       }
-
-//       if (params_.double_lidars) {
-//         // Convert input cloud to laser scan.
-//         LaserScan new_scan;
-//         new_scan.scan = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(merged_cloud_msg_in);
-//         new_scan.time_ns = rosTimeToCurveTime(merged_cloud_msg_in.header.stamp.toNSec());
-
-//         // Process the new scan and get new values and factors.
-//         gtsam::NonlinearFactorGraph new_factors;
-//         gtsam::Values new_values;
-//         bool is_prior;
+      //      laser_slam::PointMatcher::Transformation* rigid_transformation =
+      //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
+      //      CHECK_NOTNULL(rigid_transformation);
       
-//         if (params_.use_odometry_information) {
-//           laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
-//         } else {
-//           Pose new_pose;
+      //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
+      //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
+      
+      
+      //      new_fixed_cloud_pub_.publish(
+      //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
+      //                                                             params_.sensor_frame,
+      //                                                             cloud_msg_in.header.stamp));
 
-//           Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
+      PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
 
-//           if (laser_track_->getNumScans() > 2u) {
-//             Pose current_pose = laser_track_->getCurrentPose();
+      if (params_.remove_ground_from_local_map) {
+        const double robot_height_m = current_pose.T_w.getPosition()(2);
+        PointCloud new_fixed_cloud_no_ground;
+        for (size_t i = 0u; i < new_fixed_cloud_pcl.size(); ++i) {
+          if (new_fixed_cloud_pcl.points[i].z > robot_height_m - params_.ground_distance_to_robot_center_m) {
+            new_fixed_cloud_no_ground.push_back(new_fixed_cloud_pcl.points[i]);
+          }
+        }
+        new_fixed_cloud_no_ground.width = 1;
+        new_fixed_cloud_no_ground.height = new_fixed_cloud_no_ground.points.size();
+        new_fixed_cloud_pcl = new_fixed_cloud_no_ground;
+      }
 
-//             if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
-//               Time previous_pose_time = current_pose.time_ns - (new_pose_time_ns - current_pose.time_ns);
-//               if (previous_pose_time >= laser_track_->getMinTime() &&
-//                   previous_pose_time <= laser_track_->getMaxTime()) {
-//                 SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
-//                 new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
-//                     previous_pose.inverse()  * current_pose.T_w ;
-//                 new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
-//                     new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
-//               }
-//             }
-//           }
-
-//           new_pose.time_ns = new_pose_time_ns;
-//           laser_track_->processPoseAndLaserScan(new_pose, new_scan,
-//                                                 &new_factors, &new_values, &is_prior);
-
-//           last_pose_sent_to_laser_track_ = new_pose;
-//         }
-
-//         // Process the new values and factors.
-//         gtsam::Values result;
-//         if (is_prior) {
-//           result = incremental_estimator_->registerPrior(new_factors, new_values, worker_id_);
-//         } else {
-//           result = incremental_estimator_->estimate(new_factors, new_values, new_scan.time_ns);
-//         }
-
-//         // Update the trajectory.
-//         laser_track_->updateFromGTSAMValues(result);
-
-//         // Adjust the correction between the world and odom frames.
-//         Pose current_pose = laser_track_->getCurrentPose();
-//         SE3 T_odom_sensor = tfTransformToPose(tf_transform).T_w;
-//         SE3 T_w_sensor = current_pose.T_w;
-//         SE3 T_w_odom = T_w_sensor * T_odom_sensor.inverse();
-
-//         Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> matrix;
-
-//         // TODO resize needed?
-//         matrix.resize(4, 4);
-//         matrix = T_w_odom.getTransformationMatrix().cast<float>();
-
-//         {
-//           std::lock_guard<std::recursive_mutex> lock_world_to_odom(world_to_odom_mutex_);
-//           world_to_odom_ = PointMatcher_ros::eigenMatrixToStampedTransform<float>(
-//               matrix, params_.world_frame, params_.odom_frame, merged_cloud_msg_in.header.stamp);
-//         }
-
-//         publishTrajectories();
-
-//         // Get the last cloud in world frame.
-//         DataPoints new_fixed_cloud;
-//         laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
-
-//         // Transform the cloud in sensor frame
-//         //TODO(Renaud) move to a transformPointCloud() fct.
-//         //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
-//         //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
-//         //
-//         //      laser_slam::correctTransformationMatrix(&transformation_matrix);
-//         //
-//         //      laser_slam::PointMatcher::Transformation* rigid_transformation =
-//         //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
-//         //      CHECK_NOTNULL(rigid_transformation);
-//         //
-//         //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
-//         //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
-//         //
-//         //
-//         //      new_fixed_cloud_pub_.publish(
-//         //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
-//         //                                                             params_.sensor_frame,
-//         //                                                             cloud_msg_in.header.stamp));
-
-//         PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
-
-//         if (params_.remove_ground_from_local_map) {
-//           const double robot_height_m = current_pose.T_w.getPosition()(2);
-//           PointCloud new_fixed_cloud_no_ground;
-//           for (size_t i = 0u; i < new_fixed_cloud_pcl.size(); ++i) {
-//             if (new_fixed_cloud_pcl.points[i].z > robot_height_m - params_.ground_distance_to_robot_center_m) {
-//               new_fixed_cloud_no_ground.push_back(new_fixed_cloud_pcl.points[i]);
-//             }
-//           }
-//           new_fixed_cloud_no_ground.width = 1;
-//           new_fixed_cloud_no_ground.height = new_fixed_cloud_no_ground.points.size();
-//           new_fixed_cloud_pcl = new_fixed_cloud_no_ground;
-//         }
-
-//         // Add the local scans to the full point cloud.
-//         if (params_.create_filtered_map) {
-//           if (new_fixed_cloud_pcl.size() > 0u) {
-//             std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
-//             if (local_map_.size() > 0u) {
-//               local_map_ += new_fixed_cloud_pcl;
-//             } else {
-//               local_map_ = new_fixed_cloud_pcl;
-//             }
-//             local_map_queue_.push_back(new_fixed_cloud_pcl);
-//           }
-//         }
-//       }
-//     }
-//   }
-// }
+      // Add the local scans to the full point cloud.
+      if (params_.create_filtered_map) {
+        if (new_fixed_cloud_pcl.size() > 0u) {
+          std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
+          if (local_map_.size() > 0u) {
+            local_map_ += new_fixed_cloud_pcl;
+          } else {
+            local_map_ = new_fixed_cloud_pcl;
+          }
+          local_map_queue_.push_back(new_fixed_cloud_pcl);
+        }
+      }
+    }
+  }
+}
 
 void LaserSlamWorker::setLockScanCallback(bool new_state) {
   std::lock_guard<std::recursive_mutex> lock(scan_callback_mutex_);

@@ -32,9 +32,8 @@ struct LaserSlamWorkerParams {
 
   bool use_odometry_information = true;
 
-  bool without_imu = false;
-  bool double_lidars = false;
-  bool argos_format = false;
+  bool IRAP_format = false;
+  bool ARGOS_format = false;
 
 
   // Frames.
@@ -103,9 +102,8 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
   nh.getParam(ns + "/distant_map_pub_topic", params.distant_map_pub_topic);
   nh.getParam(ns + "/get_laser_track_srv_topic", params.get_laser_track_srv_topic);
 
-  nh.getParam(ns + "/without_imu", params.without_imu);
-  nh.getParam(ns + "/double_lidars", params.double_lidars);
-  nh.getParam(ns + "/argos_format", params.argos_format);
+  nh.getParam(ns + "/IRAP_format", params.IRAP_format);
+  nh.getParam(ns + "/ARGOS_format", params.ARGOS_format);
 
   return params;
 }
@@ -197,7 +195,7 @@ static PointICloud lpmToPcl_with_semantic(const laser_slam::PointMatcher::DataPo
     point.x = cloud_in.features(0,i);
     point.y = cloud_in.features(1,i);
     point.z = cloud_in.features(2,i);
-    point.intensity = (cloud_in.descriptors(0,i) + 1)*1000;
+    point.intensity = (cloud_in.descriptors(0,i) + 1)*1000; // semantic information
     cloud_out.push_back(point);
   }
   return cloud_out;
