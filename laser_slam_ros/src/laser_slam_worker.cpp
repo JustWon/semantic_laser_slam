@@ -280,18 +280,18 @@ void LaserSlamWorker::scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in)
                       " and " + params_.sensor_frame  + ".");
     }
   }
-}
+} 
 
 void LaserSlamWorker::scanCallback_ARGOS_Format(
   const laser_slam::LabeledPointCloud::ConstPtr& labeled_cloud_msg_in, 
   const sensor_msgs::Imu::ConstPtr& imu_msg_in,
   const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in) 
-{
+{ 
   std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
   if (!lock_scan_callback_) {
     
-    const sensor_msgs::PointCloud2& cloud_msg_in = labeled_cloud_msg_in->point_cloud;
-    const std::vector<int> semantic_id = labeled_cloud_msg_in->semantic_id;
+    const sensor_msgs::PointCloud2& cloud_msg_in = labeled_cloud_msg_in->point_cloud; 
+    const std::vector<int> semantic_id = labeled_cloud_msg_in->semantic_id; 
 
     geometry_msgs::Quaternion orientation = imu_msg_in->orientation;
 
@@ -345,7 +345,35 @@ void LaserSlamWorker::scanCallback_ARGOS_Format(
       if (params_.use_odometry_information) {
         laser_track_->processPoseAndLaserScan(tfTransformToPose(tf_transform), new_scan,
                                               &new_factors, &new_values, &is_prior);
-      } 
+      }
+      else {
+          Pose new_pose;
+
+          Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
+
+          if (laser_track_->getNumScans() > 2u) {
+            Pose current_pose = laser_track_->getCurrentPose();
+
+            if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
+              Time previous_pose_time = current_pose.time_ns -
+                  (new_pose_time_ns - current_pose.time_ns);
+              if (previous_pose_time >= laser_track_->getMinTime() &&
+                  previous_pose_time <= laser_track_->getMaxTime()) {
+                SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
+                new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
+                    previous_pose.inverse()  * current_pose.T_w ;
+                new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
+                    new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
+              }
+            }
+          }
+
+          new_pose.time_ns = new_pose_time_ns;
+          laser_track_->processPoseAndLaserScan(new_pose, new_scan,
+                                                &new_factors, &new_values, &is_prior);
+
+          last_pose_sent_to_laser_track_ = new_pose;
+        } 
 
       // Process the new values and factors.
       gtsam::Values result;
@@ -393,6 +421,7 @@ void LaserSlamWorker::scanCallback_ARGOS_Format(
         } else {
           semantic_local_map_ = new_fixed_icloud_pcl;
         }
+        semantic_local_map_queue_.push_back(new_fixed_icloud_pcl);
       }
 
       if (params_.remove_ground_from_local_map) {
@@ -853,7 +882,16 @@ std::vector<laser_slam_ros::PointCloud> LaserSlamWorker::getQueuedPoints() {
   std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
   std::vector<laser_slam_ros::PointCloud> new_points;
   new_points.swap(local_map_queue_);
+
   return new_points;
+}
+
+std::vector<laser_slam_ros::PointICloud> LaserSlamWorker::getSemanticQueuedPoints() {
+  std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
+  std::vector<laser_slam_ros::PointICloud> new_semantic_points;
+  new_semantic_points.swap(semantic_local_map_queue_);
+
+  return new_semantic_points;
 }
 
 // TODO one shot of cleaning.
@@ -974,7 +1012,7 @@ void LaserSlamWorker::clearLocalMap() {
     std::lock_guard<std::recursive_mutex> lock(local_map_mutex_);
     local_map_.clear();
   }
-
+ 
   {
     std::lock_guard<std::recursive_mutex> lock(local_map_filtered_mutex_);
     local_map_filtered_.clear();
@@ -1032,9 +1070,9 @@ void LaserSlamWorker::exportTrajectories() const {
   unsigned int i = 0u;
   for (const auto& pose : traj) {
     matrix(i,0) = pose.first;
-    matrix(i,1) = pose.second.getPosition()(0);
-    matrix(i,2) = pose.second.getPosition()(1);
-    matrix(i,3) = pose.second.getPosition()(2);
+    matrix(i,1) = pose.second.getPosition().x();
+    matrix(i,2) = pose.second.getPosition().y();
+    matrix(i,3) = pose.second.getPosition().z();
     ++i;
   }
   writeEigenMatrixXdCSV(matrix, "/tmp/trajectory_" + std::to_string(worker_id_) + ".csv");
@@ -1060,22 +1098,58 @@ void LaserSlamWorker::exportTrajectoryHead(laser_slam::Time head_duration_ns,
   for (const auto& pose : traj) {
     if (pose.first > head_start_ns) {
       matrix(i,0) = pose.first;
-      matrix(i,1) = pose.second.getPosition()(0);
-      matrix(i,2) = pose.second.getPosition()(1);
-      matrix(i,3) = pose.second.getPosition()(2);
+      matrix(i,1) = pose.second.getPosition().x();
+      matrix(i,2) = pose.second.getPosition().y();
+      matrix(i,3) = pose.second.getPosition().z();
       ++i;
-    }
+     }
   }
   matrix.conservativeResize(i, 4);
   writeEigenMatrixXdCSV(matrix, filename);
   LOG(INFO) << "Exported " << i << " trajectory poses to " << filename << ".";
 }
 
-bool LaserSlamWorker::exportTrajectoryServiceCall(std_srvs::Empty::Request& req,
-                                                  std_srvs::Empty::Response& res) {
-  exportTrajectoryHead(laser_track_->getMaxTime(),
-                       "/tmp/online_matcher/trajectory.csv");
-  return true;
+void LaserSlamWorker::exportTrajectory_KITTI(const std::string& filename) const {
+  
+  laser_slam::Time head_duration_ns = laser_track_->getMaxTime();
+
+  Eigen::MatrixXd matrix;
+  Trajectory traj;
+  laser_track_->getTrajectory(&traj);
+  CHECK_GE(traj.size(), 1u);
+  matrix.resize(traj.size(), 9);
+
+  const Time traj_end_ns = traj.rbegin()->first;
+  Time head_start_ns;
+  if (traj_end_ns > head_duration_ns) {
+    head_start_ns = traj_end_ns - head_duration_ns;
+  } else {
+    head_start_ns = 0u;
+  }
+
+  unsigned int i = 0u;
+  for (const auto& pose : traj) {
+    if (pose.first > head_start_ns) {
+
+      matrix(i,0) = pose.first*1e-9;
+      matrix(i,1) = pose.second.getPosition().x();
+      matrix(i,2) = pose.second.getPosition().y();
+      matrix(i,3) = pose.second.getPosition().z();
+      matrix(i,4) = pose.second.getRotation().x();
+      matrix(i,5) = pose.second.getRotation().y();
+      matrix(i,6) = pose.second.getRotation().z();
+      matrix(i,7) = pose.second.getRotation().w();
+      ++i;
+     }
+  }
+  matrix.conservativeResize(i, 8);
+  writeEigenMatrixXdCSV(matrix, filename);
+  LOG(INFO) << "Exported " << i << " trajectory poses to " << filename << ".";
 }
 
+bool LaserSlamWorker::exportTrajectoryServiceCall(std_srvs::Empty::Request& req,
+                                                  std_srvs::Empty::Response& res) {
+  exportTrajectory_KITTI("/tmp/trajectory.csv");
+  return true;
+}
 } // namespace laser_slam_ros

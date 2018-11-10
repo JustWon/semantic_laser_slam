@@ -494,7 +494,6 @@ void LaserTrack::localScanToSubMap() {
   try {
     icp_solution = icp_.compute(last_scan.scan, sub_map, transformation_matrix);
   }
-
   catch (PointMatcher::ConvergenceError error)
   {
     //LOG(INFO) << "ICP failed to converge: " << error.what();

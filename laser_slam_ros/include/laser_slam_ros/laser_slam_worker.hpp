@@ -71,6 +71,7 @@ class LaserSlamWorker {
   // Get a vector containing the optimized point clouds recorded since
   // the last call to this method. This call clears the point cloud queue.
   std::vector<laser_slam_ros::PointCloud> getQueuedPoints();
+  std::vector<laser_slam_ros::PointICloud> getSemanticQueuedPoints();
 
   void clearLocalMap();
 
@@ -96,6 +97,7 @@ class LaserSlamWorker {
   void exportTrajectories() const;
 
   void exportTrajectoryHead(laser_slam::Time head_duration_ns, const std::string& filename) const;
+  void exportTrajectory_KITTI(const std::string& filename) const;
 
   bool exportTrajectoryServiceCall(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res);
 
@@ -120,6 +122,7 @@ class LaserSlamWorker {
 
   bool getLaserTracksServiceCall(laser_slam_ros::GetLaserTrackSrv::Request& request,
                                  laser_slam_ros::GetLaserTrackSrv::Response& response);
+
 
  private:
   LaserSlamWorkerParams params_;
@@ -187,6 +190,7 @@ class LaserSlamWorker {
   // TODO(mattia): switch from local_map_ to local_map_queue_
   laser_slam_ros::PointCloud local_map_;
   std::vector<laser_slam_ros::PointCloud> local_map_queue_;
+  std::vector<laser_slam_ros::PointICloud> semantic_local_map_queue_;
 
   laser_slam_ros::PointICloud semantic_local_map_;
   laser_slam_ros::PointICloud semantic_full_map_;

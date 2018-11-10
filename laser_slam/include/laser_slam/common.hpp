@@ -155,14 +155,19 @@ typedef std::vector<std::vector<std::string> > StringMatrix;
 static void writeCSV(const StringMatrix& string_matrix, const std::string& filename) {
   CHECK_GE(string_matrix.size(), 1) << "Provided matrix of strings had no entries.";
   std::ofstream out_file_stream;
-  out_file_stream.open(filename.c_str());
+
+  try {
+    out_file_stream.open(filename.c_str());
+  } catch (std::system_error& e) {
+    LOG(INFO) << e.code().message() << std::endl;
+  }
 
   // Iterate over the rows of the string matrix and write comma-separated fields.
   for (StringMatrix::const_iterator it = string_matrix.begin(); it != string_matrix.end(); ++it) {
     CHECK_GE(it->size(), 1) << "String matrix row has no entries.";
     out_file_stream << it->at(0u);
     for (size_t i = 1u; i < it->size(); ++i) {
-      out_file_stream << "," << it->at(i);
+      out_file_stream << " " << it->at(i);
     }
     out_file_stream << std::endl;
   }
