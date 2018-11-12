@@ -79,7 +79,7 @@ void LaserSlamWorker::init(
   trajectory_pub_ = nh.advertise<nav_msgs::Path>(params_.trajectory_pub_topic, kPublisherQueueSize, true);
 
   if (params_.publish_semantic_local_map) {
-    semantic_local_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>(params_.semantic_local_map_pub_topic,
+    semantic_local_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>(params_.semantic_single_scan_pub_topic,
                                                             kPublisherQueueSize);
     if (params_.publish_semantic_full_map) {
       semantic_full_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>(params_.semantic_full_map_pub_topic,
