@@ -41,6 +41,12 @@ class LaserSlamWorker {
     const sensor_msgs::Imu::ConstPtr& imu_msg_in,
     const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in
     );
+    void scanCallback_ARGOS_Format_double_lidars(
+    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, 
+    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2,
+    const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in,
+    const sensor_msgs::Imu::ConstPtr& imu_msg_in
+    );
   void scanCallback_IRAP_Format(
     const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, 
     const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2,
@@ -147,11 +153,16 @@ class LaserSlamWorker {
   typedef message_filters::sync_policies::ApproximateTime
       <laser_slam::LabeledPointCloud, sensor_msgs::Imu, sensor_msgs::NavSatFix> MySyncPolicy;
   typedef message_filters::sync_policies::ApproximateTime
+      <sensor_msgs::PointCloud2, sensor_msgs::PointCloud2, sensor_msgs::NavSatFix, sensor_msgs::Imu> SR_Format_Double_Lidar_SyncPolicy;
+  typedef message_filters::sync_policies::ApproximateTime
       <sensor_msgs::PointCloud2, sensor_msgs::PointCloud2, sensor_msgs::NavSatFix, laser_slam::imu> IRAP_Format_SyncPolicy;
 
   typedef message_filters::Synchronizer<MySyncPolicy> Sync;
+  typedef message_filters::Synchronizer<SR_Format_Double_Lidar_SyncPolicy> SR_Format_Double_Lidar_Sync;
   typedef message_filters::Synchronizer<IRAP_Format_SyncPolicy> IRAP_Format_Sync;
+
   boost::shared_ptr<Sync> sync;
+  boost::shared_ptr<SR_Format_Double_Lidar_Sync> sr_format_double_lidar_sync;
   boost::shared_ptr<IRAP_Format_Sync> irap_format_sync;
 
   // for the raw kitti format
