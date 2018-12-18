@@ -124,6 +124,7 @@ void LaserSlamWorker::init(
                             params_.voxel_size_m,
                             params_.voxel_size_m);
   voxel_filter_.setMinimumPointsNumberPerVoxel(params_.minimum_point_number_per_voxel);
+  
 
   // Set the first world to odom transform.
   Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> matrix;
@@ -372,33 +373,33 @@ void LaserSlamWorker::scanCallback_ARGOS_Format(
                                               &new_factors, &new_values, &is_prior);
       }
       else {
-          Pose new_pose;
+        Pose new_pose;
 
-          Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
+        Time new_pose_time_ns = tfTransformToPose(tf_transform).time_ns;
 
-          if (laser_track_->getNumScans() > 2u) {
-            Pose current_pose = laser_track_->getCurrentPose();
+        if (laser_track_->getNumScans() > 2u) {
+          Pose current_pose = laser_track_->getCurrentPose();
 
-            if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
-              Time previous_pose_time = current_pose.time_ns -
-                  (new_pose_time_ns - current_pose.time_ns);
-              if (previous_pose_time >= laser_track_->getMinTime() &&
-                  previous_pose_time <= laser_track_->getMaxTime()) {
-                SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
-                new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
-                    previous_pose.inverse()  * current_pose.T_w ;
-                new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
-                    new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
-              }
+          if (current_pose.time_ns > new_pose_time_ns - current_pose.time_ns) {
+            Time previous_pose_time = current_pose.time_ns -
+                (new_pose_time_ns - current_pose.time_ns);
+            if (previous_pose_time >= laser_track_->getMinTime() &&
+                previous_pose_time <= laser_track_->getMaxTime()) {
+              SE3 previous_pose = laser_track_->evaluate(previous_pose_time);
+              new_pose.T_w = last_pose_sent_to_laser_track_.T_w *
+                  previous_pose.inverse()  * current_pose.T_w ;
+              new_pose.T_w = SE3(SO3::fromApproximateRotationMatrix(
+                  new_pose.T_w.getRotation().getRotationMatrix()), new_pose.T_w.getPosition());
             }
           }
+        }
 
-          new_pose.time_ns = new_pose_time_ns;
-          laser_track_->processPoseAndLaserScan(new_pose, new_scan,
-                                                &new_factors, &new_values, &is_prior);
+        new_pose.time_ns = new_pose_time_ns;
+        laser_track_->processPoseAndLaserScan(new_pose, new_scan,
+                                              &new_factors, &new_values, &is_prior);
 
-          last_pose_sent_to_laser_track_ = new_pose;
-        } 
+        last_pose_sent_to_laser_track_ = new_pose;
+      } 
 
       // Process the new values and factors.
       gtsam::Values result;
@@ -1036,13 +1037,13 @@ void LaserSlamWorker::publishMap() {
   }
 }
 
-void LaserSlamWorker::publishSemanticMap() {
+void LaserSlamWorker::publishSemanticMap(bool loop_closure_detected) {
   // TODO make thread safe.
   if (semantic_local_map_.size() > 0) {
-    PointICloud filtered_map;
-    getFilteredSemanticMap(&filtered_map);
-
     if (params_.publish_semantic_local_map) {
+      PointICloud filtered_map;
+      getFilteredSemanticMap(&filtered_map, loop_closure_detected);
+
       sensor_msgs::PointCloud2 local_map_msg;
       convert_to_point_cloud_2_msg(filtered_map, params_.world_frame, &local_map_msg);
       semantic_local_map_pub_.publish(local_map_msg);
@@ -1185,7 +1186,7 @@ void LaserSlamWorker::getFilteredMap(PointCloud* filtered_map) {
   // }
 }
 
-void LaserSlamWorker::getFilteredSemanticMap(PointICloud* filtered_map) {
+void LaserSlamWorker::getFilteredSemanticMap(PointICloud* filtered_map, bool loop_closure_detected) {
   laser_slam::Pose current_pose = laser_track_->getCurrentPose();
 
   PointI current_position;
@@ -1200,15 +1201,38 @@ void LaserSlamWorker::getFilteredSemanticMap(PointICloud* filtered_map) {
 
   if (params_.publish_semantic_full_map)
   {
-    // PointICloudPtr semantic_local_map_ptr(new PointICloud());
-    // pcl::copyPointCloud<PointI, PointI>(semantic_local_map, *semantic_local_map_ptr);
+    if (!loop_closure_detected)
+      semantic_full_map_ += semantic_local_map;
+    else 
+    {
+      semantic_full_map_.clear();
+      std::vector<LaserScan> laser_scans_ = laser_track_->getLaserScans();
+      for (int i = 0 ; i < laser_scans_.size() ; i+=20)
+      {
+        const DataPoints scan = laser_scans_[i].scan;
+        sensor_msgs::PointCloud2 pc = PointMatcher_ros::pointMatcherCloudToRosMsg<float>(scan, "map", ros::Time());
+        pc.fields[3].name = "intensity";
+        PointICloud temp_scan, transformed_temp_scan;
+        convert_to_pcl_point_cloud(pc, &temp_scan);
 
-    // PointICloud semantic_local_map_filtered;
+        SE3 transform = laser_track_->evaluate(laser_scans_[i].time_ns);
+        pcl::transformPointCloud(temp_scan, transformed_temp_scan, transform.getTransformationMatrix());
 
-    // voxel_filter_with_semantic_.setInputCloud(semantic_local_map_ptr);
-    // voxel_filter_with_semantic_.filter(semantic_local_map_filtered);
-    
-    semantic_full_map_ += semantic_local_map;
+        semantic_full_map_ += transformed_temp_scan;
+      }
+    }
+
+    PointICloudPtr semantic_full_map_ptr(new PointICloud());
+    pcl::copyPointCloud<PointI, PointI>(semantic_full_map_, *semantic_full_map_ptr);
+    voxel_filter_with_semantic_.setInputCloud(semantic_full_map_ptr);
+
+    float voxel_size = 1.0;
+    voxel_filter_with_semantic_.setLeafSize(voxel_size, voxel_size,voxel_size);
+
+    PointICloud semantic_full_map_filtered;
+    voxel_filter_with_semantic_.filter(semantic_full_map_filtered);
+
+    pcl::copyPointCloud<PointI, PointI>(semantic_full_map_filtered, semantic_full_map_);
   }
 
   *filtered_map = semantic_local_map;
@@ -1365,4 +1389,5 @@ bool LaserSlamWorker::exportTrajectoryServiceCall(std_srvs::Empty::Request& req,
   exportTrajectory_KITTI("/tmp/trajectory.csv");
   return true;
 }
+
 } // namespace laser_slam_ros

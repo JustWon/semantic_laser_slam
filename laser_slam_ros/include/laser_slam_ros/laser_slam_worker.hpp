@@ -22,6 +22,8 @@
 #include <laser_slam/imu.h>
 #include <sensor_msgs/NavSatFix.h>
 
+typedef curves::Time Time;
+
 namespace laser_slam_ros {
 
 class LaserSlamWorker {
@@ -63,7 +65,7 @@ class LaserSlamWorker {
 
   /// \brief Publish the map.
   void publishMap();
-  void publishSemanticMap();
+  void publishSemanticMap(bool loop_closure_detected=false);
 
   /// \brief Publish the estimated trajectory and the odometry only based trajectory.
   void publishTrajectories();
@@ -72,7 +74,7 @@ class LaserSlamWorker {
 
   // Get a filtered map and apply map separation if desired.
   void getFilteredMap(laser_slam_ros::PointCloud* filtered_map);
-  void getFilteredSemanticMap(PointICloud* filtered_map);
+  void getFilteredSemanticMap(PointICloud* filtered_map, bool loop_closure_detected=false);
 
   // Get a vector containing the optimized point clouds recorded since
   // the last call to this method. This call clears the point cloud queue.
@@ -202,6 +204,7 @@ class LaserSlamWorker {
   laser_slam_ros::PointCloud local_map_;
   std::vector<laser_slam_ros::PointCloud> local_map_queue_;
   std::vector<laser_slam_ros::PointICloud> semantic_local_map_queue_;
+  std::vector<laser_slam_ros::PointICloud> semantic_local_map_queue_full;  
 
   laser_slam_ros::PointICloud semantic_local_map_;
   laser_slam_ros::PointICloud semantic_full_map_;
@@ -225,6 +228,7 @@ class LaserSlamWorker {
   laser_slam::Pose last_pose_sent_to_laser_track_;
 
   pcl::VoxelGrid<laser_slam_ros::PclPoint> voxel_filter_;
+  pcl::VoxelGrid<laser_slam_ros::PointI> voxel_filter_with_semantic_;
 
   tf::StampedTransform world_to_odom_;
 
