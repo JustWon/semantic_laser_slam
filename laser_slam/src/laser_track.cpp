@@ -174,7 +174,8 @@ void LaserTrack::processPoseAndLaserScan(const Pose& pose, const LaserScan& in_s
     if (is_prior != NULL) {
       *is_prior = true;
     }
-  } else {
+  } 
+  else {
     // Evaluate the pose measurement at the last trajectory node.
     SE3 last_pose_measurement = getPoseMeasurement(trajectory_.getMaxTime());
 

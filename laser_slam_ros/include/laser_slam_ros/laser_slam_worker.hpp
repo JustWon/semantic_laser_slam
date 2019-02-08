@@ -55,6 +55,7 @@ class LaserSlamWorker {
     const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in,
     const laser_slam::imu::ConstPtr& imu_msg_in
     );
+  void scanCallback_VoxelNetFormat(const sensor_msgs::PointCloud2& cloud_msg_in);
 
   void mergeLidarPointCloud_SR(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
   void mergeLidarPointCloud_KAIST(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);

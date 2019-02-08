@@ -34,7 +34,7 @@ struct LaserSlamWorkerParams {
 
   bool IRAP_format = false;
   bool ARGOS_format = false;
-
+  bool VoxelNet_format = false;
 
   // Frames.
   std::string odom_frame;
@@ -104,6 +104,7 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
 
   nh.getParam(ns + "/IRAP_format", params.IRAP_format);
   nh.getParam(ns + "/ARGOS_format", params.ARGOS_format);
+  nh.getParam(ns + "/VoxelNet_format", params.VoxelNet_format);
 
   return params;
 }
