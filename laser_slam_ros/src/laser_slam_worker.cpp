@@ -930,7 +930,7 @@ void LaserSlamWorker::scanCallback_IRAP_Format(
 
 void LaserSlamWorker::scanCallback_VoxelNetFormat(const sensor_msgs::PointCloud2& cloud_msg_in)
 {
-  std::lock_guard<std::recursive_mutex> lock_scan_callback(scan_callback_mutex_);
+  std::lock_guard<std::recursive_mutex> lock_scan_callbwack(scan_callback_mutex_);
   if (!lock_scan_callback_) {
     if (true) {
       // Get the tf transform.
@@ -956,7 +956,7 @@ void LaserSlamWorker::scanCallback_VoxelNetFormat(const sensor_msgs::PointCloud2
       if (process_scan) {
         // Convert input cloud to laser scan.
         LaserScan new_scan;
-        new_scan.scan = PointMatcher_ros::rosMsgToPointMatcherCloud<float>(cloud_msg_in);
+        new_scan.scan = PointMatcher_ros::rosMsgToSemanticPointMatcherCloud<float>(cloud_msg_in);
         new_scan.time_ns = rosTimeToCurveTime(cloud_msg_in.header.stamp.toNSec());
 
         // Process the new scan and get new values and factors.
@@ -1026,32 +1026,26 @@ void LaserSlamWorker::scanCallback_VoxelNetFormat(const sensor_msgs::PointCloud2
         }
 
         publishTrajectories();
+        publishSemanticMap();
 
         // Get the last cloud in world frame.
         DataPoints new_fixed_cloud;
         laser_track_->getLocalCloudInWorldFrame(laser_track_->getMaxTime(), &new_fixed_cloud);
 
-        // Transform the cloud in sensor frame
-        //TODO(Renaud) move to a transformPointCloud() fct.
-        //      laser_slam::PointMatcher::TransformationParameters transformation_matrix =
-        //          T_w_sensor.inverse().getTransformationMatrix().cast<float>();
-        //
-        //      laser_slam::correctTransformationMatrix(&transformation_matrix);
-        //
-        //      laser_slam::PointMatcher::Transformation* rigid_transformation =
-        //          laser_slam::PointMatcher::get().REG(Transformation).create("RigidTransformation");
-        //      CHECK_NOTNULL(rigid_transformation);
-        //
-        //      laser_slam::PointMatcher::DataPoints fixed_cloud_in_sensor_frame =
-        //          rigid_transformation->compute(new_fixed_cloud,transformation_matrix);
-        //
-        //
-        //      new_fixed_cloud_pub_.publish(
-        //          PointMatcher_ros::pointMatcherCloudToRosMsg<float>(fixed_cloud_in_sensor_frame,
-        //                                                             params_.sensor_frame,
-        //                                                             cloud_msg_in.header.stamp));
-
         PointCloud new_fixed_cloud_pcl = lpmToPcl(new_fixed_cloud);
+
+
+
+        // for the semantic local map
+        if (params_.publish_semantic_local_map) {
+          PointICloud new_fixed_icloud_pcl = lpmToPcl_with_semantic(new_fixed_cloud);
+          if (semantic_local_map_.size() > 0u) {
+            semantic_local_map_ += new_fixed_icloud_pcl;
+          } else {
+            semantic_local_map_ = new_fixed_icloud_pcl;
+          }
+          semantic_local_map_queue_.push_back(new_fixed_icloud_pcl);
+        }
 
         if (params_.remove_ground_from_local_map) {
           const double robot_height_m = current_pose.T_w.getPosition()(2);
@@ -1080,9 +1074,6 @@ void LaserSlamWorker::scanCallback_VoxelNetFormat(const sensor_msgs::PointCloud2
           }
         }
       }
-    } else {
-      ROS_WARN_STREAM("[SegMapper] Timeout while waiting between " + params_.odom_frame  +
-                      " and " + params_.sensor_frame  + ".");
     }
   }
 }

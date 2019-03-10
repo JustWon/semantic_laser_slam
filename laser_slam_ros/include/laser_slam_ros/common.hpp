@@ -196,7 +196,7 @@ static PointICloud lpmToPcl_with_semantic(const laser_slam::PointMatcher::DataPo
     point.x = cloud_in.features(0,i);
     point.y = cloud_in.features(1,i);
     point.z = cloud_in.features(2,i);
-    point.intensity = (cloud_in.descriptors(0,i) + 1); // semantic information
+    point.intensity = (cloud_in.descriptors(0,i)); // semantic information
     cloud_out.push_back(point);
   }
   return cloud_out;
