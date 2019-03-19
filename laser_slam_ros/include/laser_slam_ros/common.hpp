@@ -32,8 +32,6 @@ struct LaserSlamWorkerParams {
 
   bool use_odometry_information = true;
 
-  bool IRAP_format = false;
-  bool ARGOS_format = false;
   bool VoxelNet_format = false;
 
   // Frames.
@@ -102,8 +100,6 @@ static LaserSlamWorkerParams getLaserSlamWorkerParams(const ros::NodeHandle& nh,
   nh.getParam(ns + "/distant_map_pub_topic", params.distant_map_pub_topic);
   nh.getParam(ns + "/get_laser_track_srv_topic", params.get_laser_track_srv_topic);
 
-  nh.getParam(ns + "/IRAP_format", params.IRAP_format);
-  nh.getParam(ns + "/ARGOS_format", params.ARGOS_format);
   nh.getParam(ns + "/VoxelNet_format", params.VoxelNet_format);
 
   return params;

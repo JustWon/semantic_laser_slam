@@ -22,6 +22,9 @@
 #include <laser_slam/imu.h>
 #include <sensor_msgs/NavSatFix.h>
 
+#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
+
 typedef curves::Time Time;
 
 namespace laser_slam_ros {
@@ -38,27 +41,8 @@ class LaserSlamWorker {
 
   /// \brief Register the local scans to the sliding window estimator.
   void scanCallback(const sensor_msgs::PointCloud2& cloud_msg_in);
-  void scanCallback_ARGOS_Format(
-    const laser_slam::LabeledPointCloud::ConstPtr& labeled_cloud_msg_in, 
-    const sensor_msgs::Imu::ConstPtr& imu_msg_in,
-    const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in
-    );
-    void scanCallback_ARGOS_Format_double_lidars(
-    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, 
-    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2,
-    const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in,
-    const sensor_msgs::Imu::ConstPtr& imu_msg_in
-    );
-  void scanCallback_IRAP_Format(
-    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg1, 
-    const sensor_msgs::PointCloud2::ConstPtr& laserCloudMsg2,
-    const sensor_msgs::NavSatFix::ConstPtr& gps_msg_in,
-    const laser_slam::imu::ConstPtr& imu_msg_in
-    );
   void scanCallback_VoxelNetFormat(const sensor_msgs::PointCloud2& cloud_msg_in);
-
-  void mergeLidarPointCloud_SR(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
-  void mergeLidarPointCloud_KAIST(const pcl::PointCloud<pcl::PointXYZ> laserCloudIn1, const pcl::PointCloud<pcl::PointXYZ> laserCloudIn2);
+  void scanCallback_VoxelNetFormat_with_bbox(const sensor_msgs::PointCloud2::ConstPtr& labeled_cloud_msg_in, const visualization_msgs::Marker::ConstPtr& bbox_results);
 
   /// \brief Publish the robot trajectory (as path) in ROS.
   void publishTrajectory(const laser_slam::Trajectory& trajectory,
@@ -154,28 +138,12 @@ class LaserSlamWorker {
 
   // Synchronizer
   typedef message_filters::sync_policies::ApproximateTime
-      <laser_slam::LabeledPointCloud, sensor_msgs::Imu, sensor_msgs::NavSatFix> MySyncPolicy;
-  typedef message_filters::sync_policies::ApproximateTime
-      <sensor_msgs::PointCloud2, sensor_msgs::PointCloud2, sensor_msgs::NavSatFix, sensor_msgs::Imu> SR_Format_Double_Lidar_SyncPolicy;
-  typedef message_filters::sync_policies::ApproximateTime
-      <sensor_msgs::PointCloud2, sensor_msgs::PointCloud2, sensor_msgs::NavSatFix, laser_slam::imu> IRAP_Format_SyncPolicy;
+      <sensor_msgs::PointCloud2, visualization_msgs::Marker> VoxelNet_SyncPolicy;
+  typedef message_filters::Synchronizer<VoxelNet_SyncPolicy> VoxelNet_Sync;
+  boost::shared_ptr<VoxelNet_Sync> voxelnet_sync;
 
-  typedef message_filters::Synchronizer<MySyncPolicy> Sync;
-  typedef message_filters::Synchronizer<SR_Format_Double_Lidar_SyncPolicy> SR_Format_Double_Lidar_Sync;
-  typedef message_filters::Synchronizer<IRAP_Format_SyncPolicy> IRAP_Format_Sync;
-
-  boost::shared_ptr<Sync> sync;
-  boost::shared_ptr<SR_Format_Double_Lidar_Sync> sr_format_double_lidar_sync;
-  boost::shared_ptr<IRAP_Format_Sync> irap_format_sync;
-
-  // for the raw kitti format
-  message_filters::Subscriber<laser_slam::LabeledPointCloud> *labeled_points_sub;
-  message_filters::Subscriber<sensor_msgs::Imu> *imu_sub;
-  message_filters::Subscriber<laser_slam::imu> *imu_sub_IRAP;
-  message_filters::Subscriber<sensor_msgs::NavSatFix> *gps_sub;
-
-  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub1;
-  message_filters::Subscriber<sensor_msgs::PointCloud2> *scan_sub2;
+  message_filters::Subscriber<sensor_msgs::PointCloud2> *inference_sub;
+  message_filters::Subscriber<visualization_msgs::Marker> *bbox_sub;
 
   float er = 6378137.0f;  // earth radius (approx.) in meters
   float scale = 0.0;
@@ -186,6 +154,7 @@ class LaserSlamWorker {
   ros::Publisher local_map_pub_;
   ros::Publisher semantic_local_map_pub_;
   ros::Publisher semantic_full_map_pub_;
+  ros::Publisher marker_pub;
   //  ros::Publisher odometry_trajectory_pub_;
   //  ros::Publisher point_cloud_pub_;
   //  ros::Publisher distant_map_pub_;
